@@ -1,0 +1,30 @@
+{
+  "name": "usage-guard",
+  "version": "0.1.0",
+  "description": "Protect Claude Code and Codex quota without silently reducing model quality.",
+  "author": {
+    "name": "Agent Layer",
+    "url": "https://agentlayer.sh"
+  },
+  "homepage": "https://agentlayer.sh/usage-limit-monitor",
+  "repository": "https://github.com/agent-layer-mcp/usage-guard",
+  "license": "MIT",
+  "keywords": ["usage", "quota", "claude-code", "codex", "local-first"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Usage Guard",
+    "shortDescription": "Protect quota without lowering quality",
+    "longDescription": "Local five-hour and weekly quota pacing for Codex and Claude Code. Usage Guard trims waste, limits speculative concurrency, and queues work at the reserve while preserving the active model and reasoning effort.",
+    "developerName": "Agent Layer",
+    "category": "Productivity",
+    "capabilities": ["Read local quota status", "Explain pacing choices"],
+    "websiteURL": "https://agentlayer.sh/usage-limit-monitor",
+    "privacyPolicyURL": "https://github.com/agent-layer-mcp/usage-guard/blob/main/PRIVACY.md",
+    "defaultPrompt": [
+      "Show my current Usage Guard status and explain any intervention.",
+      "Plan this task within my protected quota without lowering quality."
+    ],
+    "brandColor": "#C2452D"
+  }
+}

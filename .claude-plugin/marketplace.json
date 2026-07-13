@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agent-layer",
+  "description": "Open-source developer tools from Agent Layer",
+  "owner": {
+    "name": "Agent Layer",
+    "url": "https://agentlayer.sh"
+  },
+  "plugins": [
+    {
+      "name": "usage-guard",
+      "description": "Protect Claude Code and Codex quota without silently reducing model quality.",
+      "author": {
+        "name": "Agent Layer"
+      },
+      "category": "productivity",
+      "source": "./plugins/usage-guard",
+      "homepage": "https://agentlayer.sh/usage-limit-monitor"
+    }
+  ]
+}

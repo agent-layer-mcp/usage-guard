@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "usage-guard": {
+      "command": "usage-guard",
+      "args": ["mcp"]
+    }
+  }
+}

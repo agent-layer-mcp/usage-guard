@@ -1,0 +1,14 @@
+{
+  "name": "usage-guard",
+  "version": "0.1.0",
+  "description": "Protect Claude Code and Codex quota without silently reducing model quality.",
+  "author": {
+    "name": "Agent Layer",
+    "url": "https://agentlayer.sh"
+  },
+  "homepage": "https://agentlayer.sh/usage-limit-monitor",
+  "repository": "https://github.com/agent-layer-mcp/usage-guard",
+  "license": "MIT",
+  "keywords": ["usage", "quota", "claude-code", "codex", "local-first"],
+  "mcpServers": "./.mcp.json"
+}

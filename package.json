@@ -1,0 +1,48 @@
+{
+  "name": "@agent-layer/usage-guard",
+  "version": "0.1.0",
+  "description": "A local-first, quality-preserving usage governor for Claude Code and Codex.",
+  "type": "module",
+  "bin": {
+    "usage-guard": "./bin/usage-guard.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "plugins/",
+    ".agents/",
+    ".claude-plugin/",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md"
+  ],
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
+    "start": "node bin/usage-guard.mjs",
+    "prepack": "npm run check && npm test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agent-layer-mcp/usage-guard.git"
+  },
+  "homepage": "https://agentlayer.sh/usage-limit-monitor",
+  "bugs": {
+    "url": "https://github.com/agent-layer-mcp/usage-guard/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "usage-limits",
+    "developer-tools",
+    "local-first"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "smol-toml": "^1.7.0"
+  }
+}

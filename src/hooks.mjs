@@ -1,0 +1,50 @@
+import { formatStatusLine } from "./presentation.mjs";
+import { providerDecision, syncCodex } from "./service.mjs";
+
+export async function runProviderHook(store, provider, input, options = {}) {
+  const eventName = input.hook_event_name || input.hookEventName || options.eventName || "UserPromptSubmit";
+  const prompt = input.prompt || input.user_prompt || input.userPrompt || "";
+
+  if (provider === "codex") {
+    try {
+      await syncCodex(store, {
+        codexPath: options.codexPath,
+        timeoutMs: options.timeoutMs ?? 6000,
+        model: input.model,
+        effort: input.reasoning_effort || input.effort,
+      });
+    } catch {
+      // A stale/missing decision is safer than failing the provider's hook lifecycle.
+    }
+  }
+
+  const decision = providerDecision(store, provider, { prompt });
+  const message = formatStatusLine(decision, { color: false });
+  const output = {
+    systemMessage: decision.state === "safe" ? undefined : `${message}. ${decision.reason}`,
+    hookSpecificOutput: {
+      hookEventName: eventName,
+      additionalContext: usageContext(decision),
+    },
+  };
+
+  if (decision.blocked && eventName === "UserPromptSubmit") {
+    output.continue = false;
+    output.stopReason = `Usage Guard protected your ${decision.provider} reserve. ${decision.reason}`;
+  }
+  return removeUndefined(output);
+}
+
+export function usageContext(decision) {
+  return [
+    `[Usage Guard: ${decision.state}]`,
+    decision.instructions,
+    `Deliberate choice: ${decision.action}.`,
+    `Reason: ${decision.reason}`,
+    "Do not claim Usage Guard changed the model; it never does so silently.",
+  ].join("\n");
+}
+
+function removeUndefined(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
+}

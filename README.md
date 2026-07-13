@@ -24,7 +24,7 @@ Usage Guard cannot create unlimited included quota. If demand exceeds the provid
 Node.js 22 or newer is required. Until the npm package is published, install directly from the public repository:
 
 ```bash
-npm install --global https://github.com/agent-layer-mcp/usage-guard/archive/refs/heads/main.tar.gz
+npm install --global https://github.com/agent-layer-mcp/usage-guard/releases/latest/download/usage-guard.tgz
 usage-guard install
 ```
 

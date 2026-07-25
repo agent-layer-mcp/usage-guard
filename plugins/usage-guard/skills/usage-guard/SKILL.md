@@ -12,6 +12,7 @@ Use the `usage_guard_status` MCP tool before answering quota questions or planni
 - Never silently lower the active model or reasoning effort.
 - Preserve strong reasoning for architecture, difficult debugging, security, migrations, and final review.
 - Reduce duplicate context, speculative work, and excess concurrency before changing task timing.
+- At high context, finish the coherent step, update a durable handoff, and compact or start fresh before another large phase.
 - When the protected reserve is reached, queue quota-heavy work until reset instead of weakening it.
 - Keep tests, verification, and diff review intact.
 - Explain every intervention in plain language: what changed, why, and the controlling reset.
@@ -25,3 +26,7 @@ Use the `usage_guard_status` MCP tool before answering quota questions or planni
 - `missing` or `stale`: refresh the provider meter before making a quota claim.
 
 Do not claim that Usage Guard can create unlimited included quota. Continuity beyond the provider allowance requires waiting for reset or an explicitly enabled paid overflow path.
+
+Do not claim every provider snapshot includes both a short and weekly window.
+Use only the windows the provider actually exposes. Context pressure alone may
+change guidance but must never hard-block a prompt.

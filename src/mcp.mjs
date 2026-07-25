@@ -34,6 +34,8 @@ const TOOLS = [
         enforcement: { type: "string", enum: ["observe", "protect"] },
         fiveHourReservePercent: { type: "number", minimum: 0, maximum: 30 },
         weeklyReservePercent: { type: "number", minimum: 0, maximum: 30 },
+        contextWatchPercent: { type: "number", minimum: 1, maximum: 99 },
+        contextProtectPercent: { type: "number", minimum: 1, maximum: 100 },
       },
       additionalProperties: false,
     },

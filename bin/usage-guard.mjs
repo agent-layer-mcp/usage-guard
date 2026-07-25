@@ -41,8 +41,10 @@ try {
     store.close();
   } else if (command === "statusline" && args[0] === "claude") {
     const input = await readStdinJson();
-    ingestClaudeStatus(store, input);
-    const decision = providerDecision(store, "claude");
+    const snapshot = ingestClaudeStatus(store, input);
+    const decision = providerDecision(store, "claude", {
+      sessionId: snapshot.sessionId,
+    });
     console.log(formatStatusLine(decision));
     store.close();
   } else if (command === "hook") {

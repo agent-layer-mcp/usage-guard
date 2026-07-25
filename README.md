@@ -2,7 +2,9 @@
 
 Local-first quota pacing for Claude Code and Codex that never silently lowers model quality.
 
-Usage Guard reads the providers' documented five-hour, weekly, and additional quota windows, learns the local burn rate, and makes a visible choice before a session runs into its protected reserve.
+Usage Guard reads every short, weekly, and additional quota window the provider
+actually exposes, learns the local burn rate, and makes a visible choice before
+a session runs into its protected reserve.
 
 > Stay in flow. Never hit a limit by surprise. Never silently trade away quality.
 
@@ -10,6 +12,7 @@ Usage Guard reads the providers' documented five-hour, weekly, and additional qu
 
 - Shows every quota bucket the provider exposes, including reset time and current pace.
 - Protects separate reserves for short and weekly windows.
+- Tracks Claude context pressure per session when Claude supplies it.
 - Reduces avoidable context and speculative concurrency before changing task timing.
 - Keeps the active model and reasoning effort locked by default.
 - Blocks new quota-heavy turns at the reserve and explains when work can resume.
@@ -34,6 +37,8 @@ The installer:
 2. Configures Claude's custom status line.
 3. Adds Codex's built-in model, context, five-hour, and weekly status segments.
 4. Backs up affected settings and records the exact values needed for rollback.
+5. Records absolute Node and CLI paths so desktop apps do not depend on a shell
+   `PATH` inherited from Terminal.
 
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 
@@ -52,6 +57,7 @@ usage-guard doctor
 # Inspect or change policy.
 usage-guard config
 usage-guard config enforcement protect weeklyReservePercent 7
+usage-guard config contextWatchPercent 70 contextProtectPercent 85
 ```
 
 The dashboard runs on `http://127.0.0.1:4765` and binds only to localhost.
@@ -68,17 +74,47 @@ The dashboard runs on `http://127.0.0.1:4765` and binds only to localhost.
 
 Default reserves are 8% for windows up to six hours and 5% for longer windows. Change them locally with `usage-guard config`.
 
+Claude context guidance defaults to `watch` at 70% and `protect` at 85%.
+Context pressure never changes the selected model and never causes a hard block
+by itself. At the protect threshold, Usage Guard asks the agent to finish its
+current coherent step, update a durable handoff, and compact or start a fresh
+task before another large phase.
+
 ## Provider signals
 
 ### Claude Code
 
-Claude sends its documented `rate_limits.five_hour` and `rate_limits.seven_day` data to the Usage Guard status-line command. The payload also carries model, effort, and context data. Usage Guard stores only normalized quota observations.
+Claude can send `rate_limits.five_hour` and `rate_limits.seven_day` data to the
+Usage Guard status-line command. Eligible fields appear after a response and
+individual windows may be absent. The payload also carries model, effort,
+session, and context data. Usage Guard stores normalized quota observations and
+local per-session aggregate context percentages, not transcript contents.
 
 ### Codex
 
 Usage Guard starts the local `codex app-server`, completes the documented initialization handshake, calls `account/rateLimits/read`, stores every returned limit bucket, and exits the child process. It does not read `auth.json` or provider tokens.
 
 Codex currently supports built-in quota status-line segments rather than a Claude-style arbitrary renderer. The plugin uses those native segments, while lifecycle notices and the local dashboard show richer decisions.
+
+Codex's stable hook payload does not currently expose an exact context
+percentage to Usage Guard. Codex displays its own native context meter and
+automatically compacts. Usage Guard does not read the unstable transcript to
+manufacture an estimate.
+
+### Desktop support
+
+- Codex Desktop Work/Codex sessions: local plugin, hooks, MCP, and native status
+  segments.
+- Codex CLI: plugin, hooks, MCP, and native status segments.
+- Claude Desktop Code tab: local plugin, hooks, MCP, and custom status line for
+  local and SSH sessions.
+- Claude Code CLI: plugin, hooks, MCP, and custom status line.
+- Claude Desktop remote sessions: provider plugin hooks are not currently
+  supported.
+
+Run `usage-guard doctor` after installation. It verifies both CLIs, absolute
+desktop runtime paths, status-line configuration, plugin enabled state, meter
+freshness, and whether Claude has supplied a context observation.
 
 ## Quality contract
 
@@ -88,6 +124,12 @@ Codex currently supports built-in quota status-line segments rather than a Claud
 4. Tests, static checks, and diff review remain protected.
 5. Stale or missing data never causes a hard block.
 6. Every intervention names the action, reason, and controlling reset.
+
+Usage Guard materially reduces surprise exhaustion when provider observations
+are fresh. It cannot guarantee that an account never reaches a provider limit:
+another device or application can consume the same quota, providers can omit a
+window, and hooks cannot stop work that is already running. Missing or stale
+signals are shown explicitly and never produce a hard block.
 
 ## Privacy
 
@@ -99,7 +141,10 @@ Usage Guard is local-only by default. It does not read or store:
 - API keys
 - browsing activity
 
-It stores normalized quota observations, model/effort labels supplied by lifecycle payloads, aggregate context percentage, policy decisions, and local configuration in `~/.usage-guard/usage-guard.sqlite3`.
+It stores normalized quota observations, model/effort labels supplied by
+lifecycle payloads, local session identifiers, aggregate context percentage,
+policy decisions, and local configuration in
+`~/.usage-guard/usage-guard.sqlite3`.
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
 
@@ -132,6 +177,9 @@ claude plugin install usage-guard@agent-layer --scope user
 
 ## Status
 
-This is an early public release. Claude and Codex can change quota shapes and plugin surfaces. The adapters intentionally treat windows as optional and arbitrary; please report provider/account combinations that behave differently.
+This is an early public release. Claude and Codex can change quota shapes and
+plugin surfaces. The adapters intentionally treat windows as optional and
+arbitrary. A missing five-hour meter means the provider did not expose one in
+that snapshot, not that Usage Guard silently inferred it.
 
 Built by [Agent Layer](https://agentlayer.sh). Licensed under MIT.

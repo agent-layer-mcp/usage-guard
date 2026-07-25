@@ -17,10 +17,13 @@ export function formatStatusLine(decision, options = {}) {
     .map((window) => `${shortLabel(window)} ${Math.round(window.usedPercent)}%`)
     .join(" | ");
   const state = decision.state.toUpperCase();
+  const context = decision.context && !decision.context.stale
+    ? ` | ctx ${Math.round(decision.context.contextPercent)}%`
+    : "";
   const reset = decision.resetAt
     ? ` | ${formatDuration(Math.max(0, (decision.resetAt - Date.now()) / 60_000))}`
     : "";
-  const base = `UG ${windows || "waiting for meter"} | ${state}${reset} | quality locked`;
+  const base = `UG ${windows || "waiting for meter"}${context} | ${state}${reset} | quality locked`;
   if (!color) return base;
   const stateColor = decision.state === "safe"
     ? ANSI.green
@@ -29,7 +32,7 @@ export function formatStatusLine(decision, options = {}) {
       : decision.state === "missing"
         ? ANSI.muted
         : ANSI.red;
-  return `${ANSI.bold}UG${ANSI.reset} ${windows || "waiting for meter"} | ${stateColor}${state}${ANSI.reset}${reset} | ${ANSI.muted}quality locked${ANSI.reset}`;
+  return `${ANSI.bold}UG${ANSI.reset} ${windows || "waiting for meter"}${context} | ${stateColor}${state}${ANSI.reset}${reset} | ${ANSI.muted}quality locked${ANSI.reset}`;
 }
 
 export function formatStatusText(status) {
@@ -44,6 +47,10 @@ export function formatStatusText(status) {
       const reset = window.minutesUntilReset == null ? "reset unknown" : `resets in ${formatDuration(window.minutesUntilReset)}`;
       const pace = window.paceRatio == null ? "learning pace" : `${window.paceRatio.toFixed(1)}x sustainable`;
       output.push(`  ${window.label.padEnd(18)} ${window.usedPercent.toFixed(1).padStart(5)}% used  ${reset}  ${pace}`);
+    }
+    if (provider.context) {
+      const freshness = provider.context.stale ? "stale" : provider.contextState;
+      output.push(`  ${"session context".padEnd(18)} ${provider.context.contextPercent.toFixed(1).padStart(5)}% used  ${freshness}`);
     }
     output.push(`  Choice: ${provider.action}`);
     output.push(`  Why: ${provider.reason}`);

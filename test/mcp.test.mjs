@@ -13,6 +13,9 @@ test("MCP exposes local status and structured content", async () => {
 
   const tools = await handleRequest(store, { method: "tools/list" });
   assert.ok(tools.tools.some((tool) => tool.name === "usage_guard_status"));
+  const configure = tools.tools.find((tool) => tool.name === "usage_guard_configure");
+  assert.equal(configure.inputSchema.properties.contextWatchPercent.maximum, 99);
+  assert.equal(configure.inputSchema.properties.contextProtectPercent.maximum, 100);
 
   const result = await handleRequest(store, {
     method: "tools/call",

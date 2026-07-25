@@ -12,6 +12,8 @@ Usage Guard processes the following provider-supplied fields:
 - observation timestamp and signal source
 - model and reasoning/effort label, when supplied
 - aggregate context-window percentage, when supplied
+- an opaque local session identifier used to keep parallel context windows
+  separate
 
 Prompt text may be inspected transiently by a deterministic task classifier so Usage Guard can distinguish quality-sensitive work from mechanical work. Prompt text is never written to the database, logs, decisions, or network.
 
@@ -26,7 +28,11 @@ Prompt text may be inspected transiently by a deterministic task classifier so U
 
 ## Storage
 
-Normalized observations and decisions are stored in SQLite at `~/.usage-guard/usage-guard.sqlite3`. Installation backups and the rollback record are stored below `~/.usage-guard/` with user-only directory permissions where the operating system supports them.
+Normalized quota observations, per-session aggregate context observations, and
+decisions are stored in SQLite at `~/.usage-guard/usage-guard.sqlite3`.
+Installation backups, absolute local runtime paths, and the rollback record are
+stored below `~/.usage-guard/` with user-only directory permissions where the
+operating system supports them.
 
 Use `usage-guard reset` to delete quota observations and decisions. Use `usage-guard uninstall` to remove provider integrations and restore prior settings.
 

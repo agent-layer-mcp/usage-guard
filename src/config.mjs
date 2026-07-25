@@ -9,6 +9,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   qualityLock: true,
   fiveHourReservePercent: 8,
   weeklyReservePercent: 5,
+  contextWatchPercent: 70,
+  contextProtectPercent: 85,
   staleAfterMinutes: 15,
   dashboardPort: 4765,
 });
@@ -30,11 +32,18 @@ export function normalizeConfig(input = {}) {
   const enforcement = ["observe", "protect"].includes(merged.enforcement)
     ? merged.enforcement
     : DEFAULT_CONFIG.enforcement;
+  const contextWatchPercent = clampNumber(merged.contextWatchPercent, 1, 99, 70);
+  const contextProtectPercent = Math.max(
+    contextWatchPercent,
+    clampNumber(merged.contextProtectPercent, 1, 100, 85),
+  );
   return {
     enforcement,
     qualityLock: merged.qualityLock !== false,
     fiveHourReservePercent: clampNumber(merged.fiveHourReservePercent, 0, 30, 8),
     weeklyReservePercent: clampNumber(merged.weeklyReservePercent, 0, 30, 5),
+    contextWatchPercent,
+    contextProtectPercent,
     staleAfterMinutes: clampNumber(merged.staleAfterMinutes, 1, 240, 15),
     dashboardPort: Math.round(clampNumber(merged.dashboardPort, 1024, 65535, 4765)),
   };

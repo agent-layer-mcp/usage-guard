@@ -5,6 +5,7 @@ import { fetchCodexSnapshot } from "./providers/codex.mjs";
 export function ingestClaudeStatus(store, input, now = Date.now()) {
   const snapshot = parseClaudeStatusLine(input, now);
   if (snapshot.windows.length) store.saveSnapshot(snapshot);
+  if (Number.isFinite(snapshot.contextPercent)) store.saveContextObservation(snapshot);
   return snapshot;
 }
 

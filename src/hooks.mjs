@@ -4,6 +4,7 @@ import { providerDecision, syncCodex } from "./service.mjs";
 export async function runProviderHook(store, provider, input, options = {}) {
   const eventName = input.hook_event_name || input.hookEventName || options.eventName || "UserPromptSubmit";
   const prompt = input.prompt || input.user_prompt || input.userPrompt || "";
+  const sessionId = input.session_id || input.sessionId || null;
 
   if (provider === "codex") {
     try {
@@ -18,7 +19,7 @@ export async function runProviderHook(store, provider, input, options = {}) {
     }
   }
 
-  const decision = providerDecision(store, provider, { prompt });
+  const decision = providerDecision(store, provider, { prompt, sessionId });
   const message = formatStatusLine(decision, { color: false });
   const output = {
     systemMessage: decision.state === "safe" ? undefined : `${message}. ${decision.reason}`,

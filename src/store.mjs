@@ -32,6 +32,19 @@ export class GuardStore {
       CREATE INDEX IF NOT EXISTS quota_observations_latest
         ON quota_observations(provider, window_key, observed_at DESC);
 
+      CREATE TABLE IF NOT EXISTS context_observations (
+        provider TEXT NOT NULL,
+        session_key TEXT NOT NULL,
+        context_percent REAL NOT NULL,
+        observed_at INTEGER NOT NULL,
+        model TEXT,
+        effort TEXT,
+        source TEXT NOT NULL,
+        PRIMARY KEY (provider, session_key, observed_at)
+      );
+      CREATE INDEX IF NOT EXISTS context_observations_latest
+        ON context_observations(provider, session_key, observed_at DESC);
+
       CREATE TABLE IF NOT EXISTS decisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         provider TEXT NOT NULL,
@@ -87,6 +100,44 @@ export class GuardStore {
       this.database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  saveContextObservation(snapshot) {
+    if (!snapshot?.provider || !Number.isFinite(snapshot.contextPercent)) {
+      throw new TypeError("A provider context observation is required.");
+    }
+    const insert = this.database.prepare(`
+      INSERT OR REPLACE INTO context_observations (
+        provider, session_key, context_percent, observed_at, model, effort, source
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    insert.run(
+      snapshot.provider,
+      sessionKey(snapshot.sessionId),
+      Math.max(0, Math.min(100, snapshot.contextPercent)),
+      snapshot.observedAt,
+      snapshot.model || null,
+      snapshot.effort || null,
+      snapshot.source || "unknown",
+    );
+  }
+
+  latestContext(provider, requestedSessionId = null) {
+    if (!provider) throw new TypeError("A provider is required.");
+    if (requestedSessionId != null) {
+      const row = this.database.prepare(`
+        SELECT * FROM context_observations
+        WHERE provider = ? AND session_key = ?
+        ORDER BY observed_at DESC LIMIT 1
+      `).get(provider, sessionKey(requestedSessionId));
+      return row ? mapContextObservation(row) : null;
+    }
+    const row = this.database.prepare(`
+      SELECT * FROM context_observations
+      WHERE provider = ?
+      ORDER BY observed_at DESC LIMIT 1
+    `).get(provider);
+    return row ? mapContextObservation(row) : null;
   }
 
   latest(provider = null) {
@@ -186,7 +237,9 @@ export class GuardStore {
   }
 
   clear() {
-    this.database.exec("DELETE FROM quota_observations; DELETE FROM decisions;");
+    this.database.exec(
+      "DELETE FROM quota_observations; DELETE FROM context_observations; DELETE FROM decisions;",
+    );
   }
 
   close() {
@@ -208,6 +261,23 @@ function mapObservation(row) {
     contextPercent: numberOrNull(row.context_percent),
     source: row.source,
   };
+}
+
+function mapContextObservation(row) {
+  return {
+    provider: row.provider,
+    sessionId: row.session_key === "__provider__" ? null : row.session_key,
+    contextPercent: Number(row.context_percent),
+    observedAt: Number(row.observed_at),
+    model: row.model,
+    effort: row.effort,
+    source: row.source,
+  };
+}
+
+function sessionKey(value) {
+  if (value == null || value === "") return "__provider__";
+  return String(value).slice(0, 256);
 }
 
 function finiteOrNull(value) {

@@ -2,10 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseClaudeStatusLine } from "../src/providers/claude.mjs";
 import { parseCodexRateLimits } from "../src/providers/codex.mjs";
+import { ingestClaudeStatus } from "../src/service.mjs";
+import { GuardStore } from "../src/store.mjs";
 
 test("normalizes Claude five-hour and weekly status-line windows", () => {
   const now = Date.UTC(2026, 6, 14, 0, 0, 0);
   const snapshot = parseClaudeStatusLine({
+    session_id: "session-a",
     model: { id: "claude-sonnet", display_name: "Sonnet" },
     effort: { level: "high" },
     context_window: { used_percentage: 42 },
@@ -16,12 +19,36 @@ test("normalizes Claude five-hour and weekly status-line windows", () => {
   }, now);
 
   assert.equal(snapshot.provider, "claude");
+  assert.equal(snapshot.sessionId, "session-a");
   assert.equal(snapshot.model, "Sonnet");
   assert.equal(snapshot.contextPercent, 42);
   assert.deepEqual(snapshot.windows.map((window) => window.key), ["five-hour", "seven-day"]);
   assert.equal(snapshot.windows[0].windowMinutes, 300);
   assert.equal(snapshot.windows[0].resetsAt, Date.parse("2026-07-14T02:00:00Z"));
   assert.equal(snapshot.windows[1].resetsAt, 1_784_000_000_000);
+});
+
+test("persists Claude context even when optional quota windows are absent", () => {
+  const now = Date.UTC(2026, 6, 14);
+  const store = new GuardStore({ filename: ":memory:" });
+  const snapshot = ingestClaudeStatus(store, {
+    session_id: "context-only",
+    model: { id: "claude-sonnet", display_name: "Sonnet" },
+    context_window: { used_percentage: 74 },
+  }, now);
+
+  assert.deepEqual(snapshot.windows, []);
+  assert.deepEqual(store.latest("claude"), []);
+  assert.deepEqual(store.latestContext("claude", "context-only"), {
+    provider: "claude",
+    sessionId: "context-only",
+    contextPercent: 74,
+    observedAt: now,
+    model: "Sonnet",
+    effort: null,
+    source: "claude-status-line",
+  });
+  store.close();
 });
 
 test("does not invent Claude windows when optional rate-limit fields are absent", () => {

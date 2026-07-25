@@ -10,6 +10,7 @@ export function parseClaudeStatusLine(input, now = Date.now()) {
 
   return {
     provider: "claude",
+    sessionId: textValue(input.session_id || input.sessionId),
     observedAt: now,
     source: "claude-status-line",
     model: textValue(input.model?.display_name || input.model?.displayName || input.model?.id || input.model),

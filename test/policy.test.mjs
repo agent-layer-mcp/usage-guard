@@ -68,3 +68,86 @@ test("stale signals never trigger a blocking decision", () => {
   assert.equal(decision.blocked, false);
   store.close();
 });
+
+test("keeps parallel Claude session context isolated", () => {
+  const now = Date.UTC(2026, 6, 14);
+  const store = new GuardStore({ filename: ":memory:" });
+  store.saveSnapshot({
+    provider: "claude",
+    source: "test",
+    observedAt: now,
+    windows: [{
+      key: "five-hour",
+      label: "5 hour",
+      usedPercent: 10,
+      windowMinutes: 300,
+      resetsAt: now + 240 * 60_000,
+    }],
+  });
+  store.saveContextObservation({
+    provider: "claude",
+    sessionId: "large-session",
+    contextPercent: 89,
+    observedAt: now,
+    source: "test",
+  });
+  store.saveContextObservation({
+    provider: "claude",
+    sessionId: "fresh-session",
+    contextPercent: 12,
+    observedAt: now,
+    source: "test",
+  });
+
+  const large = buildProviderDecision(store, "claude", {
+    now,
+    sessionId: "large-session",
+  });
+  const fresh = buildProviderDecision(store, "claude", {
+    now,
+    sessionId: "fresh-session",
+  });
+
+  assert.equal(large.state, "protect");
+  assert.equal(large.quotaState, "safe");
+  assert.equal(large.contextState, "protect");
+  assert.equal(large.action, "compact-at-safe-boundary");
+  assert.equal(large.blocked, false);
+  assert.match(large.instructions, /durable handoff/i);
+  assert.equal(fresh.state, "safe");
+  assert.equal(fresh.contextState, "safe");
+  assert.doesNotMatch(fresh.instructions, /durable handoff/i);
+  store.close();
+});
+
+test("does not reuse another session's context when an exact session is unknown", () => {
+  const now = Date.UTC(2026, 6, 14);
+  const store = new GuardStore({ filename: ":memory:" });
+  store.saveSnapshot({
+    provider: "claude",
+    source: "test",
+    observedAt: now,
+    windows: [{
+      key: "five-hour",
+      label: "5 hour",
+      usedPercent: 10,
+      windowMinutes: 300,
+      resetsAt: now + 240 * 60_000,
+    }],
+  });
+  store.saveContextObservation({
+    provider: "claude",
+    sessionId: "other-session",
+    contextPercent: 95,
+    observedAt: now,
+    source: "test",
+  });
+
+  const decision = buildProviderDecision(store, "claude", {
+    now,
+    sessionId: "unknown-session",
+  });
+  assert.equal(decision.state, "safe");
+  assert.equal(decision.context, null);
+  store.close();
+});

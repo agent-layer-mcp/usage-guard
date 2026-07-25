@@ -20,6 +20,11 @@ export function buildProviderDecision(store, provider, options = {}) {
   const config = options.config || store.getConfig();
   const observations = store.latest(provider);
   const taskClass = classifyTask(options.prompt);
+  const context = evaluateContext(
+    store.latestContext(provider, options.sessionId),
+    config,
+    now,
+  );
 
   if (!observations.length) {
     return {
@@ -34,7 +39,13 @@ export function buildProviderDecision(store, provider, options = {}) {
       resetAt: null,
       createdAt: now,
       windows: [],
-      instructions: meterInstructions(provider),
+      context,
+      contextState: context?.state || "missing",
+      contextAction: context?.action || "observe",
+      instructions: joinInstructions(
+        meterInstructions(provider),
+        contextInstructions(context),
+      ),
     };
   }
 
@@ -59,18 +70,32 @@ export function buildProviderDecision(store, provider, options = {}) {
       resetAt: soonestReset(windows),
       createdAt: now,
       windows,
-      instructions: "Refresh quota before making a pacing decision. Preserve the current model and reasoning setting.",
+      context,
+      contextState: context?.state || "missing",
+      contextAction: context?.action || "observe",
+      instructions: joinInstructions(
+        "Refresh quota before making a pacing decision. Preserve the current model and reasoning setting.",
+        contextInstructions(context),
+      ),
     };
   }
 
   const controlling = [...windows].sort((a, b) => STATE_ORDER[b.state] - STATE_ORDER[a.state])[0];
-  const state = controlling?.state || "safe";
-  const blocked = state === "queue" && config.enforcement === "protect";
-  const action = actionFor(state, taskClass);
-  const reason = reasonFor(controlling, state, blocked);
+  const quotaState = controlling?.state || "safe";
+  const contextControls = context
+    && !context.stale
+    && STATE_ORDER[context.state] > STATE_ORDER[quotaState];
+  const state = contextControls ? context.state : quotaState;
+  const blocked = quotaState === "queue" && config.enforcement === "protect";
+  const action = contextControls ? context.action : actionFor(quotaState, taskClass);
+  const reason = joinReasons(
+    reasonFor(controlling, quotaState, blocked),
+    context?.state === "watch" || context?.state === "protect" ? context.reason : null,
+  );
   const decision = {
     provider,
     state,
+    quotaState,
     action,
     reason,
     taskClass,
@@ -80,7 +105,13 @@ export function buildProviderDecision(store, provider, options = {}) {
     resetAt: controlling?.resetsAt || soonestReset(windows),
     createdAt: now,
     windows,
-    instructions: instructionsFor(state, taskClass, config, controlling),
+    context,
+    contextState: context?.state || "missing",
+    contextAction: context?.action || "observe",
+    instructions: joinInstructions(
+      instructionsFor(quotaState, taskClass, config, controlling),
+      contextInstructions(context),
+    ),
   };
   store.recordDecision(decision);
   return decision;
@@ -135,6 +166,40 @@ export function evaluateWindow(observation, history, config, now = Date.now()) {
     sustainableBurnPercentPerMinute: sustainableBurn,
     paceRatio: Number.isFinite(paceRatio) ? paceRatio : paceRatio === Number.POSITIVE_INFINITY ? 999 : null,
     projectedExhaustionAt,
+  };
+}
+
+export function evaluateContext(observation, config, now = Date.now()) {
+  if (!observation || !Number.isFinite(observation.contextPercent)) return null;
+  const stale = now - observation.observedAt > config.staleAfterMinutes * 60_000;
+  if (stale) {
+    return {
+      ...observation,
+      state: "stale",
+      action: "refresh-context-meter",
+      stale: true,
+      reason: "This session's context signal is stale.",
+    };
+  }
+
+  let state = "safe";
+  let action = "observe";
+  if (observation.contextPercent >= config.contextProtectPercent) {
+    state = "protect";
+    action = "compact-at-safe-boundary";
+  } else if (observation.contextPercent >= config.contextWatchPercent) {
+    state = "watch";
+    action = "trim-context";
+  }
+
+  return {
+    ...observation,
+    state,
+    action,
+    stale: false,
+    reason: state === "safe"
+      ? `This session's context is ${observation.contextPercent.toFixed(1)}% used.`
+      : `This session's context is ${observation.contextPercent.toFixed(1)}% used and needs a safe boundary before more large work.`,
   };
 }
 
@@ -198,6 +263,22 @@ function instructionsFor(state, taskClass, config, window) {
     return `${quality} Reuse existing evidence, avoid duplicate reads, compact only at a safe boundary, and keep parallel work bounded.${reset}`;
   }
   return `${quality} Work normally; avoid unnecessary duplicate context and speculative parallel agents.${reset}`;
+}
+
+function contextInstructions(context) {
+  if (!context || context.stale || context.state === "safe") return "";
+  if (context.state === "protect") {
+    return "Context protection: finish the current coherent step, update a durable handoff, then compact or start a fresh task before another large phase. Do not lower the selected model or reasoning effort.";
+  }
+  return "Context watch: reuse existing evidence, avoid duplicate file reads, and plan the next compaction at a coherent boundary.";
+}
+
+function joinInstructions(...parts) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function joinReasons(...parts) {
+  return parts.filter(Boolean).join(" ");
 }
 
 function meterInstructions(provider) {

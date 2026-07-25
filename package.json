@@ -13,6 +13,7 @@
     ".agents/",
     ".claude-plugin/",
     "LICENSE",
+    "PRIVACY.md",
     "README.md",
     "SECURITY.md"
   ],

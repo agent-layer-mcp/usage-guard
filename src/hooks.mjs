@@ -1,5 +1,5 @@
 import { formatStatusLine } from "./presentation.mjs";
-import { providerDecision, syncCodex } from "./service.mjs";
+import { providerDecision, syncClaudeDesktop, syncCodex } from "./service.mjs";
 
 export async function runProviderHook(store, provider, input, options = {}) {
   const eventName = input.hook_event_name || input.hookEventName || options.eventName || "UserPromptSubmit";
@@ -16,6 +16,12 @@ export async function runProviderHook(store, provider, input, options = {}) {
       });
     } catch {
       // A stale/missing decision is safer than failing the provider's hook lifecycle.
+    }
+  } else if (provider === "claude") {
+    try {
+      syncClaudeDesktop(store, options.claudeDesktop);
+    } catch {
+      // An absent or changed desktop cache must not break Claude's hook lifecycle.
     }
   }
 

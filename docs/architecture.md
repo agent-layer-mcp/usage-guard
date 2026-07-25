@@ -5,17 +5,22 @@ Usage Guard is one local Node.js process with four entry surfaces:
 1. The CLI renders status, configuration, installation, and the localhost dashboard.
 2. Claude's status-line command ingests provider-exposed quota windows and
    per-session aggregate context pressure, then renders a compact line.
-3. Claude and Codex lifecycle hooks ask the policy engine for a decision before each prompt.
-4. The MCP server exposes status and decisions to provider desktop sessions.
-5. A `/bin/sh` bootstrap reads the installer-recorded Node path before either
+3. On macOS, Claude Desktop hooks defensively ingest its local aggregate plan
+   history because the Desktop Code surface does not run the custom status-line
+   command.
+4. Claude and Codex lifecycle hooks ask the policy engine for a decision before each prompt.
+5. The MCP server exposes status and decisions to provider desktop sessions.
+6. A `/bin/sh` bootstrap reads the installer-recorded Node path before either
    plugin router starts, avoiding dependence on the desktop process `PATH`.
 
 ## Data flow
 
 ```text
-Claude status-line JSON -----> quota + context normalizer --+
-                                                             |
-Codex app-server response ---> quota normalizer --------------+--> local SQLite
+Claude status-line JSON ----------> quota + context normalizer --+
+                                                                  |
+Claude Desktop aggregate cache --> quota allowlist + normalizer ---+--> local SQLite
+                                                                  |
+Codex app-server response --------> quota normalizer --------------+
                                                                   |
 transient task class ---------------------------------------------+--> policy engine
                                                                |
@@ -42,10 +47,16 @@ Usage Guard does not mutate the host's active main-thread model or reasoning set
 
 Claude context observations are keyed by local session ID so parallel desktop
 sessions do not contaminate each other. Context pressure can elevate guidance
-to `watch` or `protect`, but never to `queue`. Codex exposes its native context
-meter to the host UI but not through the stable Usage Guard hook payload, so
-Usage Guard relies on Codex auto-compaction and does not read transcript
-contents to estimate it.
+to `watch` or `protect`, but never to `queue`. Claude Desktop and Codex expose
+native context meters to their host UIs but not through every stable Usage Guard
+hook path. Usage Guard relies on host auto-compaction in those surfaces and
+does not read transcript contents to estimate context.
+
+The Claude Desktop cache adapter does not need a reset timestamp to enforce the
+reserve. It infers one only from a same-organization percentage drop of at least
+five points between samples no more than 15 minutes apart. Without that
+evidence, pace forecasting remains unavailable while reserve thresholds still
+apply.
 
 ## Forecasting
 

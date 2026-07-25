@@ -18,7 +18,18 @@ Include:
 
 ## Security boundaries
 
-Usage Guard deliberately avoids browser-cookie scraping, direct auth-file parsing, account rotation, and private provider endpoints. It reads Claude's documented status-line payload and Codex's documented local app-server response.
+Usage Guard deliberately avoids browser-cookie scraping, direct auth-file
+parsing, account rotation, private provider endpoints, and transcript mining.
+It reads Claude's documented status-line payload and Codex's documented local
+app-server response.
+
+Claude Desktop's local Code surface does not currently run the configured
+status-line command. On macOS, Usage Guard may also read the user-only
+`plan-usage-history.json` aggregate cache maintained by Claude Desktop. This is
+an undocumented local implementation detail. The parser allowlists only `fh`,
+`sd`, and sample timestamps; validates percentage ranges; does not persist
+organization identifiers; ignores unknown fields; and fails open if the cache
+is missing, stale, malformed, or changes shape.
 
 Provider hooks run local commands and therefore require explicit trust in
 Claude Code and Codex. Review

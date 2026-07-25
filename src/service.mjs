@@ -1,5 +1,6 @@
 import { buildProviderDecision, buildStatus } from "./policy.mjs";
 import { parseClaudeStatusLine } from "./providers/claude.mjs";
+import { readClaudeDesktopUsage } from "./providers/claude-desktop.mjs";
 import { fetchCodexSnapshot } from "./providers/codex.mjs";
 
 export function ingestClaudeStatus(store, input, now = Date.now()) {
@@ -13,6 +14,12 @@ export async function syncCodex(store, options = {}) {
   const snapshot = await fetchCodexSnapshot(options);
   if (!snapshot.windows.length) throw new Error("Codex returned no rate-limit windows.");
   store.saveSnapshot(snapshot);
+  return snapshot;
+}
+
+export function syncClaudeDesktop(store, options = {}) {
+  const snapshot = readClaudeDesktopUsage(options);
+  if (snapshot?.windows.length) store.saveSnapshot(snapshot);
   return snapshot;
 }
 

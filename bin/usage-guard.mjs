@@ -13,7 +13,13 @@ import {
 } from "../src/install.mjs";
 import { runMcpServer } from "../src/mcp.mjs";
 import { formatStatusLine, formatStatusText } from "../src/presentation.mjs";
-import { completeStatus, ingestClaudeStatus, providerDecision, syncCodex } from "../src/service.mjs";
+import {
+  completeStatus,
+  ingestClaudeStatus,
+  providerDecision,
+  syncClaudeDesktop,
+  syncCodex,
+} from "../src/service.mjs";
 import { GuardStore } from "../src/store.mjs";
 
 const cliPath = fileURLToPath(import.meta.url);
@@ -29,15 +35,28 @@ try {
     console.log(VERSION);
     store.close();
   } else if (command === "status") {
-    if (!args.includes("--no-sync")) await bestEffortCodexSync();
+    if (!args.includes("--no-sync")) await bestEffortProviderSyncs();
     const status = completeStatus(store);
     console.log(args.includes("--json") ? JSON.stringify(status, null, 2) : formatStatusText(status));
     store.close();
   } else if (command === "sync") {
     const provider = args[0] || "codex";
-    if (!["codex", "all"].includes(provider)) throw new Error("Claude quota sync arrives through its status line; use `usage-guard statusline claude`.");
-    const snapshot = await syncCodex(store);
-    console.log(JSON.stringify({ synced: "codex", windows: snapshot.windows }, null, 2));
+    if (!["claude", "codex", "all"].includes(provider)) {
+      throw new Error("Sync provider must be `claude`, `codex`, or `all`.");
+    }
+    const snapshots = {};
+    if (["claude", "all"].includes(provider)) {
+      const snapshot = syncClaudeDesktop(store);
+      if (!snapshot && provider === "claude") {
+        throw new Error("No supported Claude Desktop aggregate usage cache was found.");
+      }
+      if (snapshot) snapshots.claude = snapshot.windows;
+    }
+    if (["codex", "all"].includes(provider)) {
+      const snapshot = await syncCodex(store);
+      snapshots.codex = snapshot.windows;
+    }
+    console.log(JSON.stringify({ synced: Object.keys(snapshots), windows: snapshots }, null, 2));
     store.close();
   } else if (command === "statusline" && args[0] === "claude") {
     const input = await readStdinJson();
@@ -55,7 +74,7 @@ try {
     console.log(JSON.stringify(output));
     store.close();
   } else if (command === "serve") {
-    await bestEffortCodexSync();
+    await bestEffortProviderSyncs();
     const portIndex = args.indexOf("--port");
     const port = portIndex >= 0 ? Number(args[portIndex + 1]) : undefined;
     const dashboard = await startDashboard(store, { port });
@@ -67,6 +86,7 @@ try {
     process.on("SIGINT", close);
     process.on("SIGTERM", close);
   } else if (command === "mcp") {
+    bestEffortClaudeDesktopSync();
     runMcpServer(store);
     process.on("SIGINT", () => {
       store.close();
@@ -126,6 +146,19 @@ async function bestEffortCodexSync() {
   }
 }
 
+function bestEffortClaudeDesktopSync() {
+  try {
+    return syncClaudeDesktop(store);
+  } catch {
+    return null;
+  }
+}
+
+async function bestEffortProviderSyncs() {
+  bestEffortClaudeDesktopSync();
+  await bestEffortCodexSync();
+}
+
 async function readStdinJson() {
   let input = "";
   for await (const chunk of process.stdin) input += chunk;
@@ -153,6 +186,7 @@ function parseScalar(value) {
 }
 
 async function runDoctor() {
+  const claudeDesktopSnapshot = bestEffortClaudeDesktopSync();
   const checks = [
     commandCheck("claude", ["--version"]),
     commandCheck("codex", ["--version"]),
@@ -161,6 +195,7 @@ async function runDoctor() {
     ...inspectConfiguredIntegrations(),
     pluginCheck("claude", ["plugin", "list", "--json"], "usage-guard@agent-layer"),
     pluginCheck("codex", ["plugin", "list", "--json"], "usage-guard@agent-layer"),
+    claudeDesktopCacheCheck(claudeDesktopSnapshot),
   ];
   await bestEffortCodexSync();
   for (const provider of ["claude", "codex"]) {
@@ -177,6 +212,23 @@ async function runDoctor() {
   });
   for (const check of checks) console.log(`${check.ok ? "PASS" : "WAIT"}  ${check.label.padEnd(18)} ${check.detail}`);
   console.log("\nUsage Guard reads provider quota signals only. It does not read auth files, cookies, prompts, transcripts, or source code.");
+}
+
+function claudeDesktopCacheCheck(snapshot) {
+  if (process.platform !== "darwin") {
+    return { label: "Claude desktop cache", ok: true, detail: "not applicable on this platform" };
+  }
+  if (!snapshot) {
+    return { label: "Claude desktop cache", ok: false, detail: "missing, unreadable, or unsupported schema" };
+  }
+  const readings = snapshot.windows
+    .map((window) => `${window.label} ${window.usedPercent.toFixed(0)}%`)
+    .join(", ");
+  return {
+    label: "Claude desktop cache",
+    ok: true,
+    detail: `${readings}; observed ${new Date(snapshot.observedAt).toISOString()}`,
+  };
 }
 
 function commandCheck(executable, commandArgs) {
@@ -254,7 +306,7 @@ Quality-preserving quota governance for Claude Code and Codex.
 
 Commands:
   status [--json] [--no-sync]  Show windows, pace, and deliberate choices
-  sync codex                    Refresh Codex through its local app-server
+  sync [claude|codex|all]       Refresh supported provider-local usage meters
   serve [--port 4765]           Run the local dashboard
   config [key value]            Read or change local policy
   install                       Install both plugins and status-line settings

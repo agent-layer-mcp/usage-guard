@@ -45,8 +45,13 @@ Claude and Codex require users to review and trust newly installed lifecycle hoo
 ## Use
 
 ```bash
-# Live terminal view. Codex is refreshed automatically.
+# Live terminal view. Supported local provider meters are refreshed automatically.
 usage-guard status
+
+# Refresh one provider or both explicitly.
+usage-guard sync claude
+usage-guard sync codex
+usage-guard sync all
 
 # Local dashboard.
 usage-guard serve
@@ -90,6 +95,18 @@ individual windows may be absent. The payload also carries model, effort,
 session, and context data. Usage Guard stores normalized quota observations and
 local per-session aggregate context percentages, not transcript contents.
 
+Claude Desktop's local Code surface runs Usage Guard's hooks and MCP server but
+does not currently invoke the configured custom status-line command. On macOS,
+Usage Guard therefore reads Claude Desktop's user-only aggregate plan history
+before each prompt. It accepts only the observed `fh` and `sd` percentages and
+their timestamps, ignores unknown fields, and never stores the cache's
+organization identifier. This is an undocumented desktop cache, so malformed or
+changed schemas fail open as a missing signal.
+
+The Desktop cache does not include reset timestamps. Usage Guard infers one only
+from a nearby substantial downward edge for the same aggregate organization
+stream. Otherwise it preserves the reserve without forecasting pace to reset.
+
 ### Codex
 
 Usage Guard starts the local `codex app-server`, completes the documented initialization handshake, calls `account/rateLimits/read`, stores every returned limit bucket, and exits the child process. It does not read `auth.json` or provider tokens.
@@ -106,16 +123,24 @@ manufacture an estimate.
 - Codex Desktop Work/Codex sessions: local plugin, hooks, MCP, and native status
   segments.
 - Codex CLI: plugin, hooks, MCP, and native status segments.
-- Claude Desktop Code tab: local plugin, hooks, MCP, and custom status line for
-  local and SSH sessions.
+- Claude Desktop Code tab, local sessions: plugin, hooks, MCP, and aggregate
+  five-hour/weekly cache ingestion on macOS.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
-- Claude Desktop remote sessions: provider plugin hooks are not currently
+- Claude Desktop SSH and remote sessions: do not assume that the local desktop
+  aggregate cache describes the remote account or that provider hooks are
   supported.
 
 Run `usage-guard doctor` after installation. It verifies both CLIs, the
 PATH-independent plugin bootstrap, absolute desktop runtime paths, status-line
-configuration, plugin enabled state, meter freshness, and whether Claude has
-supplied a context observation.
+configuration, plugin enabled state, Claude Desktop aggregate-cache ingestion,
+meter freshness, and whether Claude has supplied a context observation.
+
+Claude Desktop displays exact context usage in its native UI, but its observed
+stable plugin hook payload and aggregate cache do not expose that percentage.
+Usage Guard does not read transcripts to manufacture it. Desktop users retain
+Claude's native context meter and automatic compaction; exact Usage Guard
+context guidance remains available where Claude's status-line payload supplies
+the value.
 
 ## Quality contract
 
@@ -146,6 +171,11 @@ It stores normalized quota observations, model/effort labels supplied by
 lifecycle payloads, local session identifiers, aggregate context percentage,
 policy decisions, and local configuration in
 `~/.usage-guard/usage-guard.sqlite3`.
+
+On macOS it may read Claude Desktop's local aggregate plan history at
+`~/Library/Application Support/Claude/plan-usage-history.json`. Usage Guard
+stores only normalized percentages and timestamps from supported fields. It
+does not store organization identifiers or unknown cache fields.
 
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
 
@@ -180,7 +210,8 @@ claude plugin install usage-guard@agent-layer --scope user
 
 This is an early public release. Claude and Codex can change quota shapes and
 plugin surfaces. The adapters intentionally treat windows as optional and
-arbitrary. A missing five-hour meter means the provider did not expose one in
-that snapshot, not that Usage Guard silently inferred it.
+arbitrary. Claude Desktop's aggregate cache is not a documented API and may
+change. A missing five-hour meter means the provider did not expose a supported
+reading in that snapshot, not that Usage Guard silently inferred it.
 
 Built by [Agent Layer](https://agentlayer.sh). Licensed under MIT.

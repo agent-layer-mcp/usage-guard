@@ -1,5 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  parseClaudeDesktopUsage,
+  readClaudeDesktopUsage,
+} from "../src/providers/claude-desktop.mjs";
 import { parseClaudeStatusLine } from "../src/providers/claude.mjs";
 import { parseCodexRateLimits } from "../src/providers/codex.mjs";
 import { ingestClaudeStatus } from "../src/service.mjs";
@@ -55,6 +62,72 @@ test("does not invent Claude windows when optional rate-limit fields are absent"
   const snapshot = parseClaudeStatusLine({ model: { id: "claude" }, rate_limits: {} });
   assert.deepEqual(snapshot.windows, []);
   assert.equal(snapshot.contextPercent, null);
+});
+
+test("normalizes the latest Claude Desktop aggregate sample without retaining organization data", () => {
+  const snapshot = parseClaudeDesktopUsage({
+    version: 2,
+    samples: [
+      { t: 1_000, org: "older-org", u: { fh: 88, sd: 44, xu: 91 } },
+      { t: 2_000, org: "active-org", u: { fh: 12.5, sd: 61, xu: 7 } },
+      { t: 1_500, org: "active-org", u: { fh: -1, sd: 105 } },
+      { t: "bad", org: "active-org", u: { fh: 99, sd: 99 } },
+    ],
+  });
+
+  assert.equal(snapshot.provider, "claude");
+  assert.equal(snapshot.observedAt, 2_000);
+  assert.equal(snapshot.source, "claude-desktop-aggregate-cache");
+  assert.equal("organization" in snapshot, false);
+  assert.deepEqual(snapshot.windows.map((window) => [window.key, window.usedPercent]), [
+    ["five-hour", 12.5],
+    ["seven-day", 61],
+  ]);
+});
+
+test("infers a next reset only from a nearby substantial same-organization drop", () => {
+  const start = Date.UTC(2026, 6, 25, 0, 0, 0);
+  const snapshot = parseClaudeDesktopUsage({
+    samples: [
+      { t: start, org: "active", u: { fh: 96, sd: 72 } },
+      { t: start + 5 * 60_000, org: "other", u: { fh: 0, sd: 0 } },
+      { t: start + 10 * 60_000, org: "active", u: { fh: 1, sd: 71 } },
+      { t: start + 20 * 60_000, org: "active", u: { fh: 2, sd: 20 } },
+    ],
+  });
+
+  assert.equal(
+    snapshot.windows.find((window) => window.key === "five-hour").resetsAt,
+    start + 10 * 60_000 + 300 * 60_000,
+  );
+  assert.equal(
+    snapshot.windows.find((window) => window.key === "seven-day").resetsAt,
+    start + 20 * 60_000 + 10_080 * 60_000,
+  );
+});
+
+test("does not infer a reset across a long sample gap or a small correction", () => {
+  const start = Date.UTC(2026, 6, 25, 0, 0, 0);
+  const snapshot = parseClaudeDesktopUsage({
+    samples: [
+      { t: start, org: "active", u: { fh: 90, sd: 60 } },
+      { t: start + 16 * 60_000, org: "active", u: { fh: 0, sd: 59 } },
+    ],
+  });
+
+  assert.deepEqual(snapshot.windows.map((window) => window.resetsAt), [null, null]);
+});
+
+test("fails open when the Claude Desktop cache is absent or malformed", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-claude-cache-"));
+  const cachePath = path.join(root, "plan-usage-history.json");
+  assert.equal(readClaudeDesktopUsage({ cachePath }), null);
+
+  writeFileSync(cachePath, "{not-json");
+  assert.equal(readClaudeDesktopUsage({ cachePath }), null);
+
+  writeFileSync(cachePath, JSON.stringify({ samples: [{ t: 1, u: { fh: 101, sd: -2 } }] }));
+  assert.equal(readClaudeDesktopUsage({ cachePath }), null);
 });
 
 test("normalizes arbitrary Codex limit buckets", () => {

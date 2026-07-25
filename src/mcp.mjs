@@ -1,4 +1,5 @@
 import readline from "node:readline";
+import { VERSION } from "./config.mjs";
 import { completeStatus, providerDecision, syncCodex } from "./service.mjs";
 
 const TOOLS = [
@@ -74,7 +75,7 @@ export async function handleRequest(store, request) {
     return {
       protocolVersion: request.params?.protocolVersion || "2025-06-18",
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "usage-guard", version: "0.1.0" },
+      serverInfo: { name: "usage-guard", version: VERSION },
       instructions: "Use Usage Guard to preserve quota without silently lowering model quality.",
     };
   }

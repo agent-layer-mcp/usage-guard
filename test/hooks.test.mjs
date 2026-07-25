@@ -16,6 +16,8 @@ test("Claude prompt hook visibly blocks at reserve", async () => {
     hook_event_name: "UserPromptSubmit",
     prompt: "Implement the migration",
   });
+  assert.equal(output.decision, "block");
+  assert.match(output.reason, /protected/i);
   assert.equal(output.continue, false);
   assert.match(output.stopReason, /protected/i);
   assert.match(output.hookSpecificOutput.additionalContext, /never does so silently/i);
@@ -36,6 +38,7 @@ test("safe hook adds bounded context without blocking", async () => {
     prompt: "Build a settings page",
   });
   assert.equal(output.continue, undefined);
+  assert.equal(output.decision, undefined);
   assert.equal(output.systemMessage, undefined);
   assert.match(output.hookSpecificOutput.additionalContext, /Quality lock is on/i);
   store.close();

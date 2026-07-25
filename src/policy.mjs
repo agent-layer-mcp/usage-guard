@@ -206,16 +206,18 @@ export function evaluateContext(observation, config, now = Date.now()) {
 function estimateBurn(history) {
   if (!Array.isArray(history) || history.length < 2) return null;
   const latest = history.at(-1);
-  let earliest = history[0];
-  for (const candidate of history) {
+  let comparison = null;
+  for (let index = history.length - 2; index >= 0; index -= 1) {
+    const candidate = history[index];
     if (latest.observedAt - candidate.observedAt >= 2 * 60_000) {
-      earliest = candidate;
+      comparison = candidate;
       break;
     }
   }
-  const elapsedMinutes = (latest.observedAt - earliest.observedAt) / 60_000;
+  if (!comparison) return null;
+  const elapsedMinutes = (latest.observedAt - comparison.observedAt) / 60_000;
   if (elapsedMinutes < 2) return null;
-  return Math.max(0, latest.usedPercent - earliest.usedPercent) / elapsedMinutes;
+  return Math.max(0, latest.usedPercent - comparison.usedPercent) / elapsedMinutes;
 }
 
 function reserveFor(windowMinutes, config) {

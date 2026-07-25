@@ -30,8 +30,10 @@ export async function runProviderHook(store, provider, input, options = {}) {
   };
 
   if (decision.blocked && eventName === "UserPromptSubmit") {
+    output.decision = "block";
+    output.reason = `Usage Guard protected your ${decision.provider} reserve. ${decision.reason}`;
     output.continue = false;
-    output.stopReason = `Usage Guard protected your ${decision.provider} reserve. ${decision.reason}`;
+    output.stopReason = output.reason;
   }
   return removeUndefined(output);
 }

@@ -54,6 +54,26 @@ test("marks fast burn as protect before the reserve is reached", () => {
   assert.ok(window.paceRatio > 1.3);
 });
 
+test("estimates burn from the nearest useful recent sample", () => {
+  const now = Date.UTC(2026, 6, 14);
+  const observation = {
+    provider: "codex",
+    key: "codex:primary",
+    label: "5 hour",
+    usedPercent: 50,
+    windowMinutes: 300,
+    resetsAt: now + 180 * 60_000,
+    observedAt: now,
+  };
+  const window = evaluateWindow(observation, [
+    { ...observation, usedPercent: 0, observedAt: now - 60 * 60_000 },
+    { ...observation, usedPercent: 40, observedAt: now - 10 * 60_000 },
+    observation,
+  ], DEFAULT_CONFIG, now);
+
+  assert.equal(window.burnPercentPerMinute, 1);
+});
+
 test("stale signals never trigger a blocking decision", () => {
   const now = Date.UTC(2026, 6, 14);
   const store = new GuardStore({ filename: ":memory:" });

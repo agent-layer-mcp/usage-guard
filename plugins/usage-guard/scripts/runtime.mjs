@@ -16,11 +16,23 @@ export function usageGuardInvocation(env = process.env) {
           argsPrefix: Array.isArray(record.runtime.argsPrefix)
             ? record.runtime.argsPrefix.map(String)
             : [],
+          providerPaths: {
+            claude: typeof record.providers?.claude === "string"
+              ? record.providers.claude
+              : null,
+            codex: typeof record.providers?.codex === "string"
+              ? record.providers.codex
+              : null,
+          },
         };
       }
     } catch {
       // Fall through to PATH lookup for older or damaged install records.
     }
   }
-  return { command: "usage-guard", argsPrefix: [] };
+  return {
+    command: "usage-guard",
+    argsPrefix: [],
+    providerPaths: { claude: null, codex: null },
+  };
 }

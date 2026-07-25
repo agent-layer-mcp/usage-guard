@@ -17,6 +17,12 @@ try {
 const provider = process.env.PLUGIN_ROOT ? "codex" : "claude";
 const event = payload.hook_event_name || payload.hookEventName || "UserPromptSubmit";
 const invocation = usageGuardInvocation();
+const childEnv = {
+  ...process.env,
+  ...(invocation.providerPaths.codex
+    ? { CODEX_PATH: invocation.providerPaths.codex }
+    : {}),
+};
 const result = spawnSync(invocation.command, [
   ...invocation.argsPrefix,
   "hook",
@@ -25,7 +31,7 @@ const result = spawnSync(invocation.command, [
 ], {
   input: JSON.stringify(payload),
   encoding: "utf8",
-  env: process.env,
+  env: childEnv,
 });
 
 if (result.status === 0 && result.stdout.trim()) process.stdout.write(result.stdout);

@@ -21,6 +21,7 @@ export function installIntegrations(options = {}) {
   const record = {
     installedAt: Date.now(),
     runtime,
+    providers: normalizeProviderPaths(options.providerPaths),
     claude: configureClaude(
       path.join(home, ".claude", "settings.json"),
       stateHome,
@@ -71,6 +72,7 @@ export function inspectConfiguredIntegrations(options = {}) {
   const configPath = path.join(home, ".codex", "config.toml");
   const record = existsSync(recordPath) ? readJsonFile(recordPath, {}) : {};
   const runtime = normalizeRuntime(record.runtime);
+  const providers = normalizeProviderPaths(record.providers);
   const expectedClaudeCommand = runtime
     ? runtimeCommand(runtime, ["statusline", "claude"])
     : null;
@@ -103,6 +105,11 @@ export function inspectConfiguredIntegrations(options = {}) {
       detail: expectedClaudeCommand && claudeCommand === expectedClaudeCommand
         ? "absolute runtime configured"
         : claudeCommand || "not configured",
+    },
+    {
+      label: "Codex app-server",
+      ok: Boolean(providers.codex && path.isAbsolute(providers.codex) && existsSync(providers.codex)),
+      detail: providers.codex || "rerun `usage-guard install` to record the Codex CLI path",
     },
     {
       label: "Codex status line",
@@ -233,6 +240,13 @@ function normalizeRuntime(runtime) {
     argsPrefix: Array.isArray(runtime.argsPrefix)
       ? runtime.argsPrefix.map(String)
       : [],
+  };
+}
+
+function normalizeProviderPaths(providerPaths) {
+  return {
+    claude: typeof providerPaths?.claude === "string" ? providerPaths.claude : null,
+    codex: typeof providerPaths?.codex === "string" ? providerPaths.codex : null,
   };
 }
 

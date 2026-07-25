@@ -87,6 +87,10 @@ try {
         command: process.execPath,
         argsPrefix: [cliPath],
       },
+      providerPaths: {
+        claude: resolveExecutablePath("claude"),
+        codex: resolveExecutablePath("codex"),
+      },
     });
     console.log(`Usage Guard installed for Claude Code and Codex.\nBackup and rollback record: ${record.installedAt}`);
     store.close();
@@ -182,6 +186,13 @@ function commandCheck(executable, commandArgs) {
     ok: result.status === 0,
     detail: result.status === 0 ? (result.stdout || result.stderr).trim() : "not found",
   };
+}
+
+function resolveExecutablePath(executable) {
+  const locator = process.platform === "win32" ? "where" : "which";
+  const result = spawnSync(locator, [executable], { encoding: "utf8" });
+  if (result.status !== 0) return null;
+  return result.stdout.split(/\r?\n/).map((value) => value.trim()).find(Boolean) || null;
 }
 
 function pluginCheck(executable, commandArgs, pluginId) {

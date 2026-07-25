@@ -43,6 +43,10 @@ test("install and uninstall restore prior status-line settings", () => {
       command: process.execPath,
       argsPrefix: [cliPath],
     },
+    providerPaths: {
+      claude: process.execPath,
+      codex: process.execPath,
+    },
   });
   const installedClaude = JSON.parse(readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   const installedCodex = parse(readFileSync(path.join(home, ".codex", "config.toml"), "utf8"));
@@ -53,11 +57,15 @@ test("install and uninstall restore prior status-line settings", () => {
   assert.ok(installedCodex.tui.status_line.includes("five-hour-limit"));
   assert.deepEqual(
     inspectConfiguredIntegrations({ homeDir: home, recordPath }).map((check) => check.ok),
-    [true, true, true],
+    [true, true, true, true],
   );
   assert.deepEqual(usageGuardInvocation({ USAGE_GUARD_HOME: stateHome }), {
     command: process.execPath,
     argsPrefix: [cliPath],
+    providerPaths: {
+      claude: process.execPath,
+      codex: process.execPath,
+    },
   });
 
   uninstallIntegrations({ recordPath, removePlugins: false });

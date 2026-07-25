@@ -67,3 +67,25 @@ test("install and uninstall restore prior status-line settings", () => {
   assert.deepEqual(parse(restoredCodexRaw).tui.status_line, ["model"]);
   assert.match(restoredCodexRaw, /# user comment/);
 });
+
+test("installer refreshes an existing Claude plugin version", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-update-"));
+  const calls = [];
+  installIntegrations({
+    homeDir: path.join(root, "home"),
+    stateHome: path.join(root, "state"),
+    recordPath: path.join(root, "state", "install-record.json"),
+    packageRoot: "/tmp/usage-guard-package",
+    runtime: {
+      command: process.execPath,
+      argsPrefix: ["/tmp/usage-guard.mjs"],
+    },
+    commandRunner(command, args) {
+      calls.push([command, ...args]);
+      return { command: [command, ...args].join(" "), ok: true, output: "" };
+    },
+  });
+
+  assert.ok(calls.some((call) => call.join(" ") ===
+    "claude plugin update usage-guard@agent-layer --scope user"));
+});

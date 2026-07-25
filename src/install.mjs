@@ -186,6 +186,7 @@ function installPlugins(packageRoot, run) {
   const results = [];
   results.push(run("claude", ["plugin", "marketplace", "add", packageRoot]));
   results.push(run("claude", ["plugin", "install", "usage-guard@agent-layer", "--scope", "user"]));
+  results.push(run("claude", ["plugin", "update", "usage-guard@agent-layer", "--scope", "user"]));
   results.push(run("codex", ["plugin", "marketplace", "add", packageRoot, "--json"]));
   results.push(run("codex", ["plugin", "add", "usage-guard@agent-layer", "--json"]));
   return results;

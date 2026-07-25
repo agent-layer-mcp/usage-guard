@@ -7,6 +7,8 @@ Usage Guard is one local Node.js process with four entry surfaces:
    per-session aggregate context pressure, then renders a compact line.
 3. Claude and Codex lifecycle hooks ask the policy engine for a decision before each prompt.
 4. The MCP server exposes status and decisions to provider desktop sessions.
+5. A `/bin/sh` bootstrap reads the installer-recorded Node path before either
+   plugin router starts, avoiding dependence on the desktop process `PATH`.
 
 ## Data flow
 

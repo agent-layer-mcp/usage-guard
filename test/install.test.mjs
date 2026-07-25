@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,7 +58,11 @@ test("install and uninstall restore prior status-line settings", () => {
   assert.ok(installedCodex.tui.status_line.includes("five-hour-limit"));
   assert.deepEqual(
     inspectConfiguredIntegrations({ homeDir: home, recordPath }).map((check) => check.ok),
-    [true, true, true, true],
+    [true, true, true, true, true],
+  );
+  assert.equal(
+    readFileSync(path.join(stateHome, "node-runtime"), "utf8").trim(),
+    process.execPath,
   );
   assert.deepEqual(usageGuardInvocation({ USAGE_GUARD_HOME: stateHome }), {
     command: process.execPath,
@@ -74,6 +79,36 @@ test("install and uninstall restore prior status-line settings", () => {
   assert.equal(restoredClaude.statusLine.command, "old");
   assert.deepEqual(parse(restoredCodexRaw).tui.status_line, ["model"]);
   assert.match(restoredCodexRaw, /# user comment/);
+});
+
+test("plugin bootstrap starts Node when desktop PATH omits it", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-bootstrap-"));
+  const stateHome = path.join(root, "state");
+  const entrypoint = path.join(root, "entrypoint.mjs");
+  const bootstrap = path.resolve("plugins/usage-guard/scripts/node-bootstrap.sh");
+  mkdirSync(stateHome, { recursive: true });
+  writeFileSync(path.join(stateHome, "node-runtime"), `${process.execPath}\n`);
+  writeFileSync(entrypoint, "process.stdout.write('desktop-bootstrap-ok')\n");
+
+  const output = execFileSync("/bin/sh", [bootstrap, entrypoint], {
+    encoding: "utf8",
+    env: {
+      HOME: root,
+      PATH: "/usr/bin:/bin",
+      USAGE_GUARD_HOME: stateHome,
+    },
+  });
+
+  assert.equal(output, "desktop-bootstrap-ok");
+});
+
+test("plugin manifests bootstrap without a bare Node command", () => {
+  const hooks = readFileSync("plugins/usage-guard/hooks/hooks.json", "utf8");
+  const mcp = JSON.parse(readFileSync("plugins/usage-guard/.mcp.json", "utf8"));
+  assert.doesNotMatch(hooks, /"command":\s*"node/);
+  assert.match(hooks, /node-bootstrap\.sh/);
+  assert.equal(mcp.mcpServers["usage-guard"].command, "/bin/sh");
+  assert.match(mcp.mcpServers["usage-guard"].args[0], /node-bootstrap\.sh$/);
 });
 
 test("installer refreshes an existing Claude plugin version", () => {

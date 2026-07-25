@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-router.mjs\"",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/node-bootstrap.sh\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-router.mjs\"",
             "timeout": 8,
             "statusMessage": "Checking protected quota"
           }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-router.mjs\"",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/node-bootstrap.sh\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-router.mjs\"",
             "timeout": 8,
             "statusMessage": "Pacing this turn"
           }

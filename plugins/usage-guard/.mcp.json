@@ -1,8 +1,11 @@
 {
   "mcpServers": {
     "usage-guard": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp-router.mjs"]
+      "command": "/bin/sh",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/node-bootstrap.sh",
+        "${CLAUDE_PLUGIN_ROOT}/scripts/mcp-router.mjs"
+      ]
     }
   }
 }

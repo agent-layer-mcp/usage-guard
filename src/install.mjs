@@ -18,9 +18,14 @@ export function installIntegrations(options = {}) {
   const packageRoot = options.packageRoot;
   const runtime = normalizeRuntime(options.runtime);
   mkdirSync(stateHome, { recursive: true, mode: 0o700 });
+  const bootstrapRuntimePath = path.join(stateHome, "node-runtime");
+  if (runtime?.command) {
+    writeFileSync(bootstrapRuntimePath, `${runtime.command}\n`, { mode: 0o600 });
+  }
   const record = {
     installedAt: Date.now(),
     runtime,
+    bootstrapRuntimePath,
     providers: normalizeProviderPaths(options.providerPaths),
     claude: configureClaude(
       path.join(home, ".claude", "settings.json"),
@@ -90,6 +95,17 @@ export function inspectConfiguredIntegrations(options = {}) {
   const runtimeReady = runtime
     && path.isAbsolute(runtime.command)
     && runtimeFiles.every(existsSync);
+  const bootstrapRuntimePath = record.bootstrapRuntimePath
+    || path.join(path.dirname(recordPath), "node-runtime");
+  const bootstrapRuntime = existsSync(bootstrapRuntimePath)
+    ? readFileSync(bootstrapRuntimePath, "utf8").trim()
+    : null;
+  const bootstrapReady = Boolean(
+    runtimeReady
+    && bootstrapRuntime === runtime.command
+    && path.isAbsolute(bootstrapRuntime)
+    && existsSync(bootstrapRuntime),
+  );
 
   return [
     {
@@ -98,6 +114,13 @@ export function inspectConfiguredIntegrations(options = {}) {
       detail: runtimeReady
         ? runtime.command
         : "rerun `usage-guard install` to record absolute Node and CLI paths",
+    },
+    {
+      label: "Plugin bootstrap",
+      ok: bootstrapReady,
+      detail: bootstrapReady
+        ? bootstrapRuntimePath
+        : "rerun `usage-guard install` to make hooks independent of desktop PATH",
     },
     {
       label: "Claude status line",

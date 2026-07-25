@@ -37,8 +37,8 @@ The installer:
 2. Configures Claude's custom status line.
 3. Adds Codex's built-in model, context, five-hour, and weekly status segments.
 4. Backs up affected settings and records the exact values needed for rollback.
-5. Records absolute Node and CLI paths so desktop apps do not depend on a shell
-   `PATH` inherited from Terminal.
+5. Records absolute Node and CLI paths and installs a `/bin/sh` bootstrap so
+   plugin hooks and MCP startup do not depend on a Terminal `PATH`.
 
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 
@@ -112,9 +112,10 @@ manufacture an estimate.
 - Claude Desktop remote sessions: provider plugin hooks are not currently
   supported.
 
-Run `usage-guard doctor` after installation. It verifies both CLIs, absolute
-desktop runtime paths, status-line configuration, plugin enabled state, meter
-freshness, and whether Claude has supplied a context observation.
+Run `usage-guard doctor` after installation. It verifies both CLIs, the
+PATH-independent plugin bootstrap, absolute desktop runtime paths, status-line
+configuration, plugin enabled state, meter freshness, and whether Claude has
+supplied a context observation.
 
 ## Quality contract
 

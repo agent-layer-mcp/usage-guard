@@ -10,6 +10,8 @@
 - Emit compatible prompt-block responses at the protected reserve.
 - Record absolute runtime paths for reliable Claude and Codex desktop hooks and
   MCP startup.
+- Bootstrap plugin hooks and MCP through `/bin/sh` so Node can start even when
+  desktop applications omit Homebrew from `PATH`.
 - Expand `doctor` to verify runtime, status lines, enabled plugins, quota
   meters, and Claude context.
 - Clarify optional provider windows and the limits of reserve enforcement.

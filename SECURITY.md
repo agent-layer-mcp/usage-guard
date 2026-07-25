@@ -23,8 +23,10 @@ Usage Guard deliberately avoids browser-cookie scraping, direct auth-file parsin
 Provider hooks run local commands and therefore require explicit trust in
 Claude Code and Codex. Review
 [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) before approving them.
-The installer records the absolute Node and Usage Guard CLI paths. Hook and MCP
-routers read that local record so desktop GUI processes do not depend on a
-Terminal `PATH`; older installs fall back to the `usage-guard` executable name.
+The installer records the absolute Node and Usage Guard CLI paths. Plugin hooks
+and MCP servers enter through `/bin/sh`, read a user-only runtime pointer, and
+then execute the recorded Node binary. This avoids relying on a Terminal
+`PATH`, which desktop GUI processes may not inherit. The JavaScript routers
+then read the full install record for the Usage Guard CLI and provider paths.
 
 The dashboard binds to `127.0.0.1`, sends a restrictive content security policy, and exposes no credential-bearing endpoint. Do not proxy it to a public interface.

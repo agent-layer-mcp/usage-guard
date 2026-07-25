@@ -6,13 +6,18 @@ import { fileURLToPath } from "node:url";
 import { VERSION } from "../src/config.mjs";
 import { startDashboard } from "../src/dashboard.mjs";
 import { runProviderHook } from "../src/hooks.mjs";
-import { installIntegrations, uninstallIntegrations } from "../src/install.mjs";
+import {
+  inspectConfiguredIntegrations,
+  installIntegrations,
+  uninstallIntegrations,
+} from "../src/install.mjs";
 import { runMcpServer } from "../src/mcp.mjs";
 import { formatStatusLine, formatStatusText } from "../src/presentation.mjs";
 import { completeStatus, ingestClaudeStatus, providerDecision, syncCodex } from "../src/service.mjs";
 import { GuardStore } from "../src/store.mjs";
 
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const cliPath = fileURLToPath(import.meta.url);
+const packageRoot = path.resolve(path.dirname(cliPath), "..");
 const [command = "status", ...args] = process.argv.slice(2);
 const store = new GuardStore();
 
@@ -73,7 +78,14 @@ try {
     }
     store.close();
   } else if (command === "install") {
-    const record = installIntegrations({ packageRoot, installPlugins: !args.includes("--settings-only") });
+    const record = installIntegrations({
+      packageRoot,
+      installPlugins: !args.includes("--settings-only"),
+      runtime: {
+        command: process.execPath,
+        argsPrefix: [cliPath],
+      },
+    });
     console.log(`Usage Guard installed for Claude Code and Codex.\nBackup and rollback record: ${record.installedAt}`);
     store.close();
   } else if (command === "uninstall") {
@@ -140,12 +152,23 @@ async function runDoctor() {
     commandCheck("codex", ["--version"]),
     { label: "Local database", ok: true, detail: store.filename },
     { label: "Quality lock", ok: store.getConfig().qualityLock, detail: store.getConfig().qualityLock ? "enabled" : "disabled" },
+    ...inspectConfiguredIntegrations(),
+    pluginCheck("claude", ["plugin", "list", "--json"], "usage-guard@agent-layer"),
+    pluginCheck("codex", ["plugin", "list", "--json"], "usage-guard@agent-layer"),
   ];
   await bestEffortCodexSync();
   for (const provider of ["claude", "codex"]) {
     const decision = providerDecision(store, provider);
     checks.push({ label: `${provider} meter`, ok: !["missing", "stale"].includes(decision.state), detail: decision.state });
   }
+  const claudeContext = store.latestContext("claude");
+  checks.push({
+    label: "claude context",
+    ok: Boolean(claudeContext),
+    detail: claudeContext
+      ? `${claudeContext.contextPercent.toFixed(1)}% from a local session`
+      : "no context observation yet",
+  });
   for (const check of checks) console.log(`${check.ok ? "PASS" : "WAIT"}  ${check.label.padEnd(18)} ${check.detail}`);
   console.log("\nUsage Guard reads provider quota signals only. It does not read auth files, cookies, prompts, transcripts, or source code.");
 }
@@ -157,6 +180,25 @@ function commandCheck(executable, commandArgs) {
     ok: result.status === 0,
     detail: result.status === 0 ? (result.stdout || result.stderr).trim() : "not found",
   };
+}
+
+function pluginCheck(executable, commandArgs, pluginId) {
+  const result = spawnSync(executable, commandArgs, { encoding: "utf8" });
+  if (result.status !== 0) {
+    return { label: `${executable} plugin`, ok: false, detail: "unable to inspect" };
+  }
+  try {
+    const parsed = JSON.parse(result.stdout);
+    const plugins = Array.isArray(parsed) ? parsed : parsed.installed || [];
+    const plugin = plugins.find((item) => (item.id || item.pluginId) === pluginId);
+    return {
+      label: `${executable} plugin`,
+      ok: Boolean(plugin?.enabled),
+      detail: plugin ? (plugin.enabled ? "installed and enabled" : "installed but disabled") : "not installed",
+    };
+  } catch {
+    return { label: `${executable} plugin`, ok: false, detail: "invalid plugin-list response" };
+  }
 }
 
 function seedDemo(target) {

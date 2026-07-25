@@ -16,10 +16,16 @@ export function installIntegrations(options = {}) {
   const home = options.homeDir || os.homedir();
   const stateHome = options.stateHome || guardHome(options.env);
   const packageRoot = options.packageRoot;
+  const runtime = normalizeRuntime(options.runtime);
   mkdirSync(stateHome, { recursive: true, mode: 0o700 });
   const record = {
     installedAt: Date.now(),
-    claude: configureClaude(path.join(home, ".claude", "settings.json"), stateHome),
+    runtime,
+    claude: configureClaude(
+      path.join(home, ".claude", "settings.json"),
+      stateHome,
+      runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
+    ),
     codex: configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
   };
 
@@ -40,18 +46,70 @@ export function uninstallIntegrations(options = {}) {
   return record;
 }
 
-export function configureClaude(settingsPath, stateHome) {
+export function configureClaude(
+  settingsPath,
+  stateHome,
+  command = "usage-guard statusline claude",
+) {
   mkdirSync(path.dirname(settingsPath), { recursive: true });
   backupFile(settingsPath, stateHome, "claude-settings.json");
   const settings = readJsonFile(settingsPath, {});
   const previous = Object.hasOwn(settings, "statusLine") ? settings.statusLine : null;
   settings.statusLine = {
     type: "command",
-    command: "usage-guard statusline claude",
+    command,
     padding: 0,
   };
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
   return { path: settingsPath, previous };
+}
+
+export function inspectConfiguredIntegrations(options = {}) {
+  const home = options.homeDir || os.homedir();
+  const recordPath = options.recordPath || installRecordPath(options.env);
+  const settingsPath = path.join(home, ".claude", "settings.json");
+  const configPath = path.join(home, ".codex", "config.toml");
+  const record = existsSync(recordPath) ? readJsonFile(recordPath, {}) : {};
+  const runtime = normalizeRuntime(record.runtime);
+  const expectedClaudeCommand = runtime
+    ? runtimeCommand(runtime, ["statusline", "claude"])
+    : null;
+  const settings = readJsonFile(settingsPath, {});
+  const claudeCommand = settings.statusLine?.command || null;
+  const codexConfig = existsSync(configPath) && readFileSync(configPath, "utf8").trim()
+    ? parse(readFileSync(configPath, "utf8"))
+    : {};
+  const codexItems = Array.isArray(codexConfig.tui?.status_line)
+    ? codexConfig.tui.status_line
+    : [];
+  const runtimeFiles = runtime
+    ? [runtime.command, ...runtime.argsPrefix].filter((value) => path.isAbsolute(value))
+    : [];
+  const runtimeReady = runtime
+    && path.isAbsolute(runtime.command)
+    && runtimeFiles.every(existsSync);
+
+  return [
+    {
+      label: "Desktop runtime",
+      ok: Boolean(runtimeReady),
+      detail: runtimeReady
+        ? runtime.command
+        : "rerun `usage-guard install` to record absolute Node and CLI paths",
+    },
+    {
+      label: "Claude status line",
+      ok: Boolean(expectedClaudeCommand && claudeCommand === expectedClaudeCommand),
+      detail: expectedClaudeCommand && claudeCommand === expectedClaudeCommand
+        ? "absolute runtime configured"
+        : claudeCommand || "not configured",
+    },
+    {
+      label: "Codex status line",
+      ok: CODEX_STATUS_ITEMS.every((item) => codexItems.includes(item)),
+      detail: codexItems.length ? codexItems.join(", ") : "not configured",
+    },
+  ];
 }
 
 export function configureCodex(configPath, stateHome) {
@@ -165,6 +223,22 @@ function backupFile(source, stateHome, filename) {
 function readJsonFile(filename, fallback) {
   if (!existsSync(filename)) return fallback;
   return JSON.parse(readFileSync(filename, "utf8"));
+}
+
+function normalizeRuntime(runtime) {
+  if (!runtime?.command || typeof runtime.command !== "string") return null;
+  return {
+    command: runtime.command,
+    argsPrefix: Array.isArray(runtime.argsPrefix)
+      ? runtime.argsPrefix.map(String)
+      : [],
+  };
+}
+
+function runtimeCommand(runtime, args = []) {
+  return [runtime.command, ...runtime.argsPrefix, ...args]
+    .map((value) => JSON.stringify(value))
+    .join(" ");
 }
 
 function escapeRegex(value) {

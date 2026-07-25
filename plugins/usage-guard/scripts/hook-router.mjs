@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { usageGuardInvocation } from "./runtime.mjs";
 
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
@@ -15,7 +16,13 @@ try {
 
 const provider = process.env.PLUGIN_ROOT ? "codex" : "claude";
 const event = payload.hook_event_name || payload.hookEventName || "UserPromptSubmit";
-const result = spawnSync("usage-guard", ["hook", provider, event], {
+const invocation = usageGuardInvocation();
+const result = spawnSync(invocation.command, [
+  ...invocation.argsPrefix,
+  "hook",
+  provider,
+  event,
+], {
   input: JSON.stringify(payload),
   encoding: "utf8",
   env: process.env,

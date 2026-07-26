@@ -2,11 +2,6 @@ import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const FIVE_HOUR_MS = 300 * 60_000;
-const SEVEN_DAY_MS = 10_080 * 60_000;
-const DEFAULT_MAX_RESET_GAP_MS = 15 * 60_000;
-const DEFAULT_MIN_RESET_DROP = 5;
-
 export function claudeDesktopUsagePath(options = {}) {
   const platform = options.platform ?? process.platform;
   if (platform !== "darwin") return null;
@@ -36,11 +31,6 @@ export function parseClaudeDesktopUsage(payload, options = {}) {
   const latest = samples.at(-1);
   if (!latest) return null;
 
-  const organizationSamples = samples.filter((sample) => sample.organization === latest.organization);
-  const resetOptions = {
-    maxGapMs: options.maxResetGapMs ?? DEFAULT_MAX_RESET_GAP_MS,
-    minDrop: options.minResetDrop ?? DEFAULT_MIN_RESET_DROP,
-  };
   const windows = [];
 
   if (latest.fiveHour != null) {
@@ -49,13 +39,9 @@ export function parseClaudeDesktopUsage(payload, options = {}) {
       label: "5 hour",
       usedPercent: latest.fiveHour,
       windowMinutes: 300,
-      resetsAt: inferNextReset(
-        organizationSamples,
-        "fiveHour",
-        FIVE_HOUR_MS,
-        latest.observedAt,
-        resetOptions,
-      ),
+      // The Desktop aggregate cache does not expose an authoritative reset.
+      // A prior usage drop cannot anchor a later activity-started window.
+      resetsAt: null,
     });
   }
 
@@ -65,13 +51,7 @@ export function parseClaudeDesktopUsage(payload, options = {}) {
       label: "weekly",
       usedPercent: latest.sevenDay,
       windowMinutes: 10_080,
-      resetsAt: inferNextReset(
-        organizationSamples,
-        "sevenDay",
-        SEVEN_DAY_MS,
-        latest.observedAt,
-        resetOptions,
-      ),
+      resetsAt: null,
     });
   }
 
@@ -105,25 +85,4 @@ function normalizeSample(sample) {
 
 function percentage(value) {
   return Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
-}
-
-function inferNextReset(samples, field, windowMs, latestAt, options) {
-  let resetAt = null;
-  let previous = null;
-
-  for (const sample of samples) {
-    const value = sample[field];
-    if (value == null) continue;
-    if (previous) {
-      const gap = sample.observedAt - previous.observedAt;
-      const drop = previous.value - value;
-      if (gap > 0 && gap <= options.maxGapMs && drop >= options.minDrop) {
-        const candidate = sample.observedAt + windowMs;
-        if (candidate > latestAt) resetAt = candidate;
-      }
-    }
-    previous = { observedAt: sample.observedAt, value };
-  }
-
-  return resetAt;
 }

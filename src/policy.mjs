@@ -140,7 +140,7 @@ export function evaluateWindow(observation, history, config, now = Date.now()) {
   const reservePercent = reserveFor(observation.windowMinutes, config);
   const usablePercent = Math.max(0, remainingPercent - reservePercent);
   const sustainableBurn = resetMinutes && resetMinutes > 0 ? usablePercent / resetMinutes : null;
-  const burnPercentPerMinute = estimateBurn(history);
+  const burnPercentPerMinute = estimateBurn(history, observation.windowMinutes);
   const paceRatio = sustainableBurn != null && burnPercentPerMinute != null
     ? sustainableBurn === 0
       ? Number.POSITIVE_INFINITY
@@ -215,21 +215,37 @@ export function evaluateContext(observation, config, now = Date.now()) {
   };
 }
 
-function estimateBurn(history) {
+function estimateBurn(history, windowMinutes) {
   if (!Array.isArray(history) || history.length < 2) return null;
-  const latest = history.at(-1);
-  let comparison = null;
-  for (let index = history.length - 2; index >= 0; index -= 1) {
-    const candidate = history[index];
-    if (latest.observedAt - candidate.observedAt >= 2 * 60_000) {
-      comparison = candidate;
-      break;
+
+  let segmentStart = 0;
+  for (let index = 1; index < history.length; index += 1) {
+    if (history[index - 1].usedPercent - history[index].usedPercent >= 5) {
+      segmentStart = index;
     }
   }
-  if (!comparison) return null;
-  const elapsedMinutes = (latest.observedAt - comparison.observedAt) / 60_000;
-  if (elapsedMinutes < 2) return null;
-  return Math.max(0, latest.usedPercent - comparison.usedPercent) / elapsedMinutes;
+
+  const segment = history.slice(segmentStart);
+  if (segment.length < 2) return null;
+  const latest = segment.at(-1);
+  const horizons = windowMinutes != null && windowMinutes <= 360
+    ? [15, 30, 60]
+    : [60, 360, 1_440];
+  const slopes = [];
+
+  for (const horizonMinutes of horizons) {
+    const candidates = segment.filter((candidate) => {
+      const elapsed = (latest.observedAt - candidate.observedAt) / 60_000;
+      return elapsed >= 2 && elapsed <= horizonMinutes;
+    });
+    const comparison = candidates[0];
+    if (!comparison) continue;
+    const elapsedMinutes = (latest.observedAt - comparison.observedAt) / 60_000;
+    const increase = latest.usedPercent - comparison.usedPercent;
+    if (increase >= 0) slopes.push(increase / elapsedMinutes);
+  }
+
+  return slopes.length ? Math.max(...slopes) : null;
 }
 
 function reserveFor(windowMinutes, config) {

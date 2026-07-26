@@ -84,7 +84,7 @@ test("replays the reported Claude Desktop exhaustion as watch then protect", () 
     [10, 13, "watch"],
     [20, 53, "protect"],
     [25, 75, "protect"],
-    [45, 78, "watch"],
+    [45, 78, "protect"],
     [50, 96, "queue"],
   ];
 
@@ -108,7 +108,7 @@ test("replays the reported Claude Desktop exhaustion as watch then protect", () 
   store.close();
 });
 
-test("estimates burn from the nearest useful recent sample", () => {
+test("uses the highest sustained recent burn instead of forgetting an earlier spike", () => {
   const now = Date.UTC(2026, 6, 14);
   const observation = {
     provider: "codex",
@@ -126,6 +126,39 @@ test("estimates burn from the nearest useful recent sample", () => {
   ], DEFAULT_CONFIG, now);
 
   assert.equal(window.burnPercentPerMinute, 1);
+});
+
+test("replays the field-reported 0 to 46 percent Desktop burn without inventing a reset", () => {
+  const store = new GuardStore({ filename: ":memory:" });
+  const base = Date.UTC(2026, 6, 26, 15, 12, 12);
+  const points = [
+    [0, 0, "safe"],
+    [8, 8, "watch"],
+    [13, 28, "protect"],
+    [18, 42, "protect"],
+    [23, 46, "protect"],
+    [68, 51, "watch"],
+  ];
+
+  for (const [minutes, usedPercent, expected] of points) {
+    const now = base + minutes * 60_000;
+    store.saveSnapshot({
+      provider: "claude",
+      source: "claude-desktop-aggregate-cache",
+      observedAt: now,
+      windows: [{
+        key: "five-hour",
+        label: "5 hour",
+        usedPercent,
+        windowMinutes: 300,
+        resetsAt: null,
+      }],
+    });
+    const decision = buildProviderDecision(store, "claude", { now });
+    assert.equal(decision.quotaState, expected, `${usedPercent}% should be ${expected}`);
+    assert.equal(decision.resetAt, null);
+  }
+  store.close();
 });
 
 test("stale signals never trigger a blocking decision", () => {

@@ -85,7 +85,7 @@ test("normalizes the latest Claude Desktop aggregate sample without retaining or
   ]);
 });
 
-test("infers a next reset only from a nearby substantial same-organization drop", () => {
+test("never fabricates a Desktop reset from an earlier aggregate usage drop", () => {
   const start = Date.UTC(2026, 6, 25, 0, 0, 0);
   const snapshot = parseClaudeDesktopUsage({
     samples: [
@@ -93,25 +93,6 @@ test("infers a next reset only from a nearby substantial same-organization drop"
       { t: start + 5 * 60_000, org: "other", u: { fh: 0, sd: 0 } },
       { t: start + 10 * 60_000, org: "active", u: { fh: 1, sd: 71 } },
       { t: start + 20 * 60_000, org: "active", u: { fh: 2, sd: 20 } },
-    ],
-  });
-
-  assert.equal(
-    snapshot.windows.find((window) => window.key === "five-hour").resetsAt,
-    start + 10 * 60_000 + 300 * 60_000,
-  );
-  assert.equal(
-    snapshot.windows.find((window) => window.key === "seven-day").resetsAt,
-    start + 20 * 60_000 + 10_080 * 60_000,
-  );
-});
-
-test("does not infer a reset across a long sample gap or a small correction", () => {
-  const start = Date.UTC(2026, 6, 25, 0, 0, 0);
-  const snapshot = parseClaudeDesktopUsage({
-    samples: [
-      { t: start, org: "active", u: { fh: 90, sd: 60 } },
-      { t: start + 16 * 60_000, org: "active", u: { fh: 0, sd: 59 } },
     ],
   });
 

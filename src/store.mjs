@@ -176,14 +176,21 @@ export class GuardStore {
   }
 
   history(provider, windowKey, resetAt, since) {
+    if (resetAt == null) {
+      return this.database.prepare(`
+        SELECT * FROM quota_observations
+        WHERE provider = ? AND window_key = ? AND observed_at >= ?
+        ORDER BY observed_at ASC
+      `).all(provider, windowKey, since).map(mapObservation);
+    }
     const statement = this.database.prepare(`
       SELECT * FROM quota_observations
       WHERE provider = ? AND window_key = ? AND observed_at >= ?
-        AND (resets_at = ? OR (resets_at IS NULL AND ? IS NULL))
+        AND resets_at = ?
       ORDER BY observed_at ASC
     `);
     return statement
-      .all(provider, windowKey, since, resetAt, resetAt)
+      .all(provider, windowKey, since, resetAt)
       .map(mapObservation);
   }
 

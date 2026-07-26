@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   readPxpipeTelemetry,
   weightedInputEquivalent,
+  weightedInputEquivalentRange,
 } from "../src/providers/pxpipe.mjs";
 
 test("pxpipe telemetry reports local request cost drivers without prompt content", () => {
@@ -38,7 +39,10 @@ test("pxpipe telemetry reports local request cost drivers without prompt content
 
   assert.equal(telemetry.contextTokens, 566_691);
   assert.equal(telemetry.imageCount, 143);
-  assert.equal(telemetry.weightedInputEquivalent, 51_760);
+  assert.equal(telemetry.weightedInputEquivalent, null);
+  assert.equal(telemetry.weightedInputEquivalentMin, 51_760);
+  assert.equal(telemetry.weightedInputEquivalentMax, 52_510);
+  assert.equal(telemetry.cacheWriteTtl, "unknown");
   assert.equal(telemetry.microcompactDisabled, true);
   assert.equal("prompt" in telemetry, false);
   assert.equal(telemetry.stale, false);
@@ -70,4 +74,19 @@ test("weighted request cost uses documented directional API ratios", () => {
     cache_read_tokens: 10,
     output_tokens: 2,
   }), 22);
+});
+
+test("weighted request cost detects explicit one-hour cache writes", () => {
+  assert.deepEqual(weightedInputEquivalentRange({
+    input_tokens: 1,
+    cache_create_tokens: 8,
+    cache_create_5m_tokens: 0,
+    cache_create_1h_tokens: 8,
+    cache_read_tokens: 10,
+    output_tokens: 2,
+  }), {
+    min: 28,
+    max: 28,
+    cacheWriteTtl: "1h",
+  });
 });

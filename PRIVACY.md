@@ -29,12 +29,28 @@ Usage Guard uses the latest valid sample. It does not persist the cache's
 organization identifier, ignores unknown fields such as `xu`, and treats an
 absent or changed schema as a missing signal.
 
+If the separately installed pxpipe proxy has a local
+`~/.pxpipe/events.jsonl` ledger, Usage Guard may read recent successful
+`/v1/messages` event metadata to show:
+
+- model label
+- baseline context-token count
+- image count
+- input and output token counts
+- five-minute, one-hour, or unclassified cache-creation token counts
+- cache-read token count
+
+Usage Guard returns only these allowlisted numeric diagnostics, does not persist
+the ledger rows, and treats missing or old rows as unavailable. It is not
+pxpipe, does not install or configure that proxy, and does not send this
+metadata to Agent Layer.
+
 Prompt text may be inspected transiently by a deterministic task classifier so Usage Guard can distinguish quality-sensitive work from mechanical work. Prompt text is never written to the database, logs, decisions, or network.
 
 ## Data not accessed or stored
 
 - source files, diffs, repository contents, or command output
-- transcript bodies
+- transcript bodies (Usage Guard does not parse Claude session JSONL)
 - cookies or browser sessions
 - Claude or OpenAI auth files and access tokens
 - API keys
@@ -62,5 +78,8 @@ Codex app-server, which uses the user's existing Codex session through official
 Codex behavior. Claude quota data arrives through Claude Code's local
 status-line process or, for the macOS Desktop local Code surface, from the local
 aggregate plan history described above.
+
+Optional pxpipe request diagnostics are read from its existing local ledger.
+No request is made to pxpipe or Agent Layer to obtain them.
 
 The package manager and provider marketplace commands may access their normal public registries during installation and updates.

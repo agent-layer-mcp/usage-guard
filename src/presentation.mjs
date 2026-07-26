@@ -57,13 +57,24 @@ export function formatStatusText(status) {
     output.push("");
   }
   const request = status.diagnostics?.claudeRequest;
+  const impact = status.diagnostics?.requestImpact;
   if (request && !request.stale) {
     output.push("Claude request diagnostics (local pxpipe)");
     output.push(`  Context tokens      ${formatNumber(request.contextTokens)}`);
     output.push(`  Resident images     ${formatNumber(request.imageCount)}`);
-    output.push(`  Weighted request    ${formatNumber(request.weightedInputEquivalent)} directional input-equivalents`);
+    output.push(`  Weighted request    ${formatRange(
+      request.weightedInputEquivalentMin,
+      request.weightedInputEquivalentMax,
+    )} API input-equivalents`);
+    output.push(`  Cache write TTL     ${request.cacheWriteTtl || "unknown"}`);
     if (request.microcompactDisabled) {
       output.push("  Microcompact        disabled in this process environment");
+    }
+    if (impact) {
+      output.push(`  Estimated quota/call ${impact.quotaPercentPerRequest.toFixed(2)}%`);
+      output.push(`  Calls to reserve    ~${Math.max(0, Math.floor(impact.estimatedCallsUntilReserve)).toLocaleString("en-US")}`);
+      output.push(`  Compaction posture  ${impact.compactionRecommended ? "compact at next safe boundary" : "normal"}`);
+      output.push(`  Estimate caveat     ${impact.caveat}`);
     }
     output.push(`  Caveat              ${request.weighting.caveat}`);
     output.push("");
@@ -74,6 +85,12 @@ export function formatStatusText(status) {
 
 function formatNumber(value) {
   return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "unknown";
+}
+
+function formatRange(minimum, maximum) {
+  if (!Number.isFinite(minimum)) return "unknown";
+  if (!Number.isFinite(maximum) || minimum === maximum) return formatNumber(minimum);
+  return `${formatNumber(minimum)}-${formatNumber(maximum)}`;
 }
 
 function shortLabel(window) {

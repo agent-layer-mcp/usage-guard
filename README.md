@@ -3,16 +3,20 @@
 Local-first quota pacing for Claude Code and Codex that never silently lowers model quality.
 
 Usage Guard reads every short, weekly, and additional quota window the provider
-actually exposes, learns the local burn rate, and makes a visible choice before
-a session runs into its protected reserve.
+actually exposes, learns the observed quota burn rate, and makes a visible
+choice before a session runs into its protected reserve. It never invents a
+reset time when the provider has not supplied one.
 
 > Stay in flow. Never hit a limit by surprise. Never silently trade away quality.
 
 ## What it does
 
-- Shows every quota bucket the provider exposes, including reset time and current pace.
+- Shows every quota bucket the provider exposes, including authoritative reset
+  time when available and current observed pace.
 - Protects separate reserves for short and weekly windows.
 - Tracks Claude context pressure per session when Claude supplies it.
+- Optionally surfaces current Claude request context, resident images, cache
+  writes/reads, and directional weighted cost from a local pxpipe ledger.
 - Reduces avoidable context and speculative concurrency before changing task timing.
 - Keeps the active model and reasoning effort locked by default.
 - Blocks new quota-heavy turns at the reserve and explains when work can resume.
@@ -39,10 +43,10 @@ The installer:
 4. Backs up affected settings and records the exact values needed for rollback.
 5. Records absolute Node and CLI paths and installs a `/bin/sh` bootstrap so
    plugin hooks and MCP startup do not depend on a Terminal `PATH`.
-6. On macOS, installs a local one-minute background monitor that shows desktop
-   notifications when Claude usage escalates to `WATCH`, `PROTECT`, or `QUEUE`.
-   It prefers `terminal-notifier` when available and otherwise uses the built-in
-   AppleScript notification path.
+6. On macOS, builds a small native Usage Guard notification helper and installs
+   a local one-minute background monitor. It alerts when Claude usage escalates
+   to `WATCH`, `PROTECT`, or `QUEUE`, with legacy notification paths retained
+   only as fallbacks.
 
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 
@@ -107,11 +111,31 @@ their timestamps, ignores unknown fields, and never stores the cache's
 organization identifier. This is an undocumented desktop cache, so malformed or
 changed schemas fail open as a missing signal.
 
-The Desktop cache does not include reset timestamps. Usage Guard infers one only
-from a nearby substantial downward edge for the same aggregate organization
-stream. When reset time remains unknown, it still projects minutes until the
-configured reserve from recent aggregate burn: `WATCH` within 90 minutes and
-`PROTECT` within 30 minutes by default.
+The Desktop cache does not include reset timestamps. Usage Guard therefore
+reports the reset as unknown; it never treats an earlier aggregate drop as the
+anchor for a later window. It still projects minutes until the configured
+reserve from multiple recent aggregate-burn horizons: `WATCH` within 90 minutes
+and `PROTECT` within 30 minutes by default.
+
+### Optional Claude request diagnostics
+
+Usage Guard is not an API proxy. When the separately installed local pxpipe
+proxy has a fresh `~/.pxpipe/events.jsonl` ledger, the `status` command, MCP
+status tool, and escalation notification can surface request metadata that
+explains cost:
+
+- baseline context tokens
+- resident image count
+- cache creation and cache-read tokens
+- output tokens
+- directional API-equivalent request weight
+
+Cache writes are weighted at `1.25x` for an explicitly reported five-minute
+TTL and `2x` for an explicitly reported one-hour TTL. If pxpipe does not identify
+the TTL, Usage Guard shows the possible range instead of choosing the cheaper
+multiplier. These ratios are useful diagnostics, not a claim about Anthropic's
+private Max-plan quota formula. Provider-reported usage percentage and its
+observed derivative remain the decision authority.
 
 ### Codex
 
@@ -129,10 +153,10 @@ manufacture an estimate.
 - Codex Desktop Work/Codex sessions: local plugin, hooks, MCP, and native status
   segments.
 - Codex CLI: plugin, hooks, MCP, and native status segments.
-- Claude Desktop Code tab, local sessions: plugin, prompt and tool-boundary
-  hooks, MCP, aggregate five-hour/weekly cache ingestion, and background macOS
-  notifications. Active runs receive one in-chat cue when their state changes
-  into `WATCH` or `PROTECT`; repeated tool calls in the same state stay silent.
+- Claude Desktop Code tab, local sessions: plugin, session/prompt hooks, MCP,
+  aggregate five-hour/weekly cache ingestion, and background macOS
+  notifications. Sessions receive one stable quality contract at start and one
+  in-chat cue when their state changes into `WATCH` or `PROTECT`.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
 - Claude Desktop SSH and remote sessions: do not assume that the local desktop
   aggregate cache describes the remote account or that provider hooks are
@@ -157,15 +181,30 @@ the value.
 3. Timing changes before quality changes.
 4. Tests, static checks, and diff review remain protected.
 5. Stale or missing data never causes a hard block.
-6. Every intervention names the action, reason, and controlling reset.
+6. Every intervention names the action and reason, and names the controlling
+   reset only when the provider supplied it.
+
+### Why Usage Guard does not downgrade the model
+
+The quality lock is also a cache-economics decision. Field analysis of the
+current Claude Code implementation found `model` and reasoning effort among
+the prompt-cache key inputs. Changing either mid-session can invalidate a large
+cached prefix and cause an expensive cache rewrite before any lower-cost turns
+can repay it. Tool-schema changes can have a similar effect.
+
+That implementation detail is not a public compatibility guarantee and may
+change, but the product rule does not depend on it: Usage Guard first removes
+waste, bounds concurrency, recommends a safe compaction boundary, or delays
+work. It never silently weakens the selected model or reasoning effort.
 
 Usage Guard materially reduces surprise exhaustion when provider observations
 are fresh. It cannot guarantee that an account never reaches a provider limit:
 another device or application can consume the same quota, providers can omit a
-window, and no plugin can interrupt a single model generation before the host
-reaches a lifecycle or tool boundary. Claude tool-boundary hooks can stop a
-long agentic run once the reserve is reached. Missing or stale signals are shown
-explicitly and never produce a hard block.
+window, and no plugin can interrupt a model generation already in flight.
+Usage Guard deliberately avoids a catch-all `PreToolUse` subprocess on every
+tool call; the background monitor provides mid-run escalation alerts without
+hundreds of Node process launches. Missing or stale signals are shown explicitly
+and never produce a hard block.
 
 ## Privacy
 
@@ -188,6 +227,13 @@ local aggregate plan history at
 stores only normalized percentages and timestamps from supported fields. It
 does not store organization identifiers or unknown cache fields.
 
+If pxpipe is installed separately, status surfaces may read its local request
+ledger for the allowlisted numeric diagnostics listed above. Usage Guard does
+not read Claude transcripts, does not return request bodies, and does not store
+pxpipe rows. If transcript support is ever added, duplicated streaming records
+must be grouped by request/message ID and the maximum usage values retained;
+naive line summation is explicitly prohibited.
+
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
 
 ## Remove
@@ -198,7 +244,8 @@ npm uninstall --global @agent-layer/usage-guard
 ```
 
 The uninstall command removes both plugin integrations and restores the prior status-line settings without replacing unrelated current settings.
-On macOS it also unloads and removes the Usage Guard background monitor.
+On macOS it also unloads the Usage Guard background monitor and removes the
+native notification helper.
 
 ## Development
 

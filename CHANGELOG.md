@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.4 - 2026-07-26
+
+- Stop fabricating Claude Desktop reset times from old aggregate usage drops;
+  reset remains unknown unless the provider supplies it.
+- Evaluate observed quota burn across multiple recent horizons so a rapid
+  0-to-46% rise enters `WATCH` and `PROTECT` before cumulative thresholds lag.
+- Add an exact regression replay for the reported 22-hour field session.
+- Inject one stable quality contract at session start and transition-only
+  `WATCH`/`PROTECT` guidance; live percentages and resets remain behind the MCP
+  status tool.
+- Remove the catch-all Claude `PreToolUse` hook that spawned Node for every
+  tool call.
+- Optionally surface fresh local pxpipe context size, resident images, cache
+  activity, and API-equivalent weighted request cost. Detect explicit
+  five-minute (`1.25x`) and one-hour (`2x`) cache-write TTLs; show a range when
+  TTL is unknown.
+- Replace unreliable legacy macOS alert delivery with a native, auditable Usage
+  Guard notification helper installed in the user-only state directory.
+- Document why model/effort downgrades can invalidate prompt caches, while
+  keeping provider-private subscription weighting clearly labeled as unknown.
+
 ## 0.2.3 - 2026-07-26
 
 - Prefer `terminal-notifier` for macOS alerts when it is installed, with

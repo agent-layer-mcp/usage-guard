@@ -47,9 +47,17 @@ cache, writes to the user-only Usage Guard state directory, and may display a
 local notification. It does not run as root and is removed by
 `usage-guard uninstall`.
 
-If Homebrew's `terminal-notifier` is already installed, Usage Guard invokes its
-absolute path for more reliable macOS delivery. It does not install the helper
-or execute a binary discovered from an untrusted desktop `PATH`; only the
-standard Apple Silicon and Intel Homebrew paths are considered.
+The installer compiles a small, auditable Swift notification helper from the
+source bundled in `native/`, ad-hoc signs it, and stores it below the user-only
+Usage Guard state directory. It requests normal macOS notification permission
+and runs without root privileges. If that helper is unavailable, Usage Guard
+may invoke `terminal-notifier` only from the standard Apple Silicon or Intel
+Homebrew path, then falls back to AppleScript.
+
+Optional pxpipe diagnostics parse only recent successful message-event rows
+from its local ledger and return an allowlist of numeric fields. Usage Guard
+does not parse Claude transcript JSONL. Any future transcript-derived meter
+must group streaming duplicates by message/request ID and retain maximum usage
+values before aggregation; summing raw lines is prohibited.
 
 The dashboard binds to `127.0.0.1`, sends a restrictive content security policy, and exposes no credential-bearing endpoint. Do not proxy it to a public interface.

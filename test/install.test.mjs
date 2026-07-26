@@ -108,9 +108,11 @@ test("plugin bootstrap starts Node when desktop PATH omits it", () => {
 
 test("plugin manifests bootstrap without a bare Node command", () => {
   const hooks = readFileSync("plugins/usage-guard/hooks/hooks.json", "utf8");
+  const parsedHooks = JSON.parse(hooks);
   const mcp = JSON.parse(readFileSync("plugins/usage-guard/.mcp.json", "utf8"));
   assert.doesNotMatch(hooks, /"command":\s*"node/);
   assert.match(hooks, /node-bootstrap\.sh/);
+  assert.equal(parsedHooks.hooks.PreToolUse, undefined);
   assert.equal(mcp.mcpServers["usage-guard"].command, "/bin/sh");
   assert.match(mcp.mcpServers["usage-guard"].args[0], /node-bootstrap\.sh$/);
 });

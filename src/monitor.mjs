@@ -4,7 +4,12 @@ import path from "node:path";
 import { guardHome } from "./config.mjs";
 import { formatStatusLine } from "./presentation.mjs";
 import { readPxpipeTelemetry } from "./providers/pxpipe.mjs";
-import { providerDecision, syncClaudeDesktop, syncCodex } from "./service.mjs";
+import {
+  estimateRequestImpact,
+  providerDecision,
+  syncClaudeDesktop,
+  syncCodex,
+} from "./service.mjs";
 
 const STATE_ORDER = Object.freeze({
   missing: -1,
@@ -38,12 +43,13 @@ export async function runMonitorCycle(store, options = {}) {
       const request = provider === "claude"
         ? readPxpipeTelemetry({ ...options.pxpipe, now: options.now })
         : null;
+      const impact = estimateRequestImpact(decision, request);
       notifier({
         title: "Usage Guard",
         subtitle: `${providerName(provider)}: ${decision.state.toUpperCase()}`,
         message: [
           `${formatStatusLine(decision, { color: false })}. ${decision.reason}`,
-          request && !request.stale ? requestDiagnostic(request) : null,
+          request && !request.stale ? requestDiagnostic(request, impact) : null,
         ].filter(Boolean).join(" "),
         state: decision.state,
       });
@@ -148,14 +154,20 @@ function providerName(provider) {
   return provider === "claude" ? "Claude" : "Codex";
 }
 
-function requestDiagnostic(request) {
+function requestDiagnostic(request, impact) {
   const context = Number.isFinite(request.contextTokens)
     ? `${Math.round(request.contextTokens / 1_000)}k context`
     : null;
   const images = Number.isFinite(request.imageCount) && request.imageCount > 0
     ? `${Math.round(request.imageCount)} images resident`
     : null;
-  return [context, images].filter(Boolean).join("; ");
+  const calls = impact?.estimatedCallsUntilReserve != null
+    ? `~${Math.max(0, Math.floor(impact.estimatedCallsUntilReserve))} calls to reserve`
+    : null;
+  const compact = impact?.compactionRecommended
+    ? "compact at the next safe boundary"
+    : null;
+  return [context, images, calls, compact].filter(Boolean).join("; ");
 }
 
 function escapeAppleScript(value) {

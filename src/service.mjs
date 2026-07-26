@@ -35,6 +35,8 @@ export function completeStatus(store, options = {}) {
     now: options.now,
     env: options.env || process.env,
   });
+  const claudeDecision = status.providers.find((item) => item.provider === "claude");
+  const requestImpact = estimateRequestImpact(claudeDecision, claudeRequest);
   return {
     ...status,
     privacy: {
@@ -44,6 +46,47 @@ export function completeStatus(store, options = {}) {
     },
     diagnostics: {
       claudeRequest,
+      requestImpact,
     },
+  };
+}
+
+export function estimateRequestImpact(decision, request) {
+  if (
+    !decision
+    || !request
+    || request.stale
+    || request.recentRequestCount < 2
+    || !Number.isFinite(request.recentElapsedMinutes)
+    || request.recentElapsedMinutes <= 0
+  ) return null;
+
+  const requestsPerMinute = request.recentRequestCount / request.recentElapsedMinutes;
+  const window = [...(decision.windows || [])]
+    .filter((item) => Number.isFinite(item.burnPercentPerMinute) && item.burnPercentPerMinute > 0)
+    .sort((a, b) => (a.windowMinutes ?? Number.MAX_SAFE_INTEGER) - (b.windowMinutes ?? Number.MAX_SAFE_INTEGER))[0];
+  if (!window || !Number.isFinite(requestsPerMinute) || requestsPerMinute <= 0) return null;
+
+  const quotaPercentPerRequest = window.burnPercentPerMinute / requestsPerMinute;
+  const estimatedCallsUntilReserve = quotaPercentPerRequest > 0
+    ? window.usablePercent / quotaPercentPerRequest
+    : null;
+  const contextIsLarge = Number.isFinite(request.contextTokens)
+    && request.contextTokens >= 200_000;
+  const imagesAreMaterial = Number.isFinite(request.imageCount)
+    && request.imageCount >= 25;
+  const compactionRecommended = contextIsLarge
+    && (quotaPercentPerRequest >= 0.2 || imagesAreMaterial);
+
+  return {
+    windowKey: window.key,
+    requestsPerMinute,
+    quotaPercentPerRequest,
+    estimatedCallsUntilReserve,
+    compactionRecommended,
+    reason: compactionRecommended
+      ? "Current context cost is high relative to observed quota burn; compact at the next safe boundary."
+      : "Request impact is within the current advisory threshold.",
+    caveat: "Directional estimate: account burn may include other sessions or devices.",
   };
 }

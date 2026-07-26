@@ -41,6 +41,13 @@ export async function runProviderHook(store, provider, input, options = {}) {
     });
   }
 
+  if (eventName === "Stop") {
+    return {
+      systemMessage: message,
+      suppressOutput: true,
+    };
+  }
+
   if (eventName === "PreToolUse") {
     if (decision.blocked) {
       const reason = `Usage Guard stopped this run at a tool boundary to protect your ${decision.provider} reserve. ${decision.reason}`;

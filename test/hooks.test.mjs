@@ -68,6 +68,43 @@ test("session start adds one stable quality contract without volatile meter data
   store.close();
 });
 
+test("Claude stop hook shows a post-response usage footer without model context", async () => {
+  const now = Date.now();
+  const store = new GuardStore({ filename: ":memory:" });
+  store.saveSnapshot({
+    provider: "claude",
+    source: "claude-status-line",
+    observedAt: now,
+    windows: [{
+      key: "five-hour",
+      label: "5 hour",
+      usedPercent: 4,
+      windowMinutes: 300,
+      resetsAt: now + 3 * 60 * 60_000,
+    }, {
+      key: "seven-day",
+      label: "weekly",
+      usedPercent: 30,
+      windowMinutes: 10_080,
+      resetsAt: now + 5 * 24 * 60 * 60_000,
+    }],
+  });
+
+  const output = await runProviderHook(store, "claude", {
+    hook_event_name: "Stop",
+    session_id: "desktop-session",
+    last_assistant_message: "This content must not be repeated or stored.",
+  }, { claudeDesktop: { platform: "linux" } });
+
+  assert.match(output.systemMessage, /UG 5h 4% \| wk 30%/);
+  assert.match(output.systemMessage, /SAFE/);
+  assert.match(output.systemMessage, /quality locked/);
+  assert.equal(output.hookSpecificOutput, undefined);
+  assert.equal(output.suppressOutput, true);
+  assert.doesNotMatch(output.systemMessage, /must not be repeated/i);
+  store.close();
+});
+
 test("Claude Desktop hook synchronizes aggregate usage before protecting reserve", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-hook-cache-"));
   const cachePath = path.join(root, "plan-usage-history.json");

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6 - 2026-07-27
+
+- Add a compact post-response Claude usage footer through the supported `Stop`
+  hook and `systemMessage` output.
+- Keep the footer outside model-generated response text and model context so it
+  does not consume response tokens or mutate the cacheable prompt.
+
 ## 0.2.5 - 2026-07-27
 
 - Preserve authoritative Claude Code status-line reset timestamps across

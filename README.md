@@ -162,8 +162,11 @@ manufacture an estimate.
 - Codex CLI: plugin, hooks, MCP, and native status segments.
 - Claude Desktop Code tab, local sessions: plugin, session/prompt hooks, MCP,
   aggregate five-hour/weekly cache ingestion, and background macOS
-  notifications. Sessions receive one stable quality contract at start and one
-  in-chat cue when their state changes into `WATCH` or `PROTECT`.
+  notifications. Sessions receive one stable quality contract at start, one
+  in-chat cue when their state changes into `WATCH` or `PROTECT`, and a compact
+  post-response usage footer rendered by Claude's `Stop` hook. The footer is a
+  host `systemMessage`; the model does not generate it and it is not injected as
+  additional context.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
 - Claude Desktop SSH and remote sessions: do not assume that the local desktop
   aggregate cache describes the remote account or that provider hooks are

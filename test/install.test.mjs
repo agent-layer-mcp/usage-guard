@@ -113,6 +113,7 @@ test("plugin manifests bootstrap without a bare Node command", () => {
   assert.doesNotMatch(hooks, /"command":\s*"node/);
   assert.match(hooks, /node-bootstrap\.sh/);
   assert.equal(parsedHooks.hooks.PreToolUse, undefined);
+  assert.equal(parsedHooks.hooks.Stop.length, 1);
   assert.equal(mcp.mcpServers["usage-guard"].command, "/bin/sh");
   assert.match(mcp.mcpServers["usage-guard"].args[0], /node-bootstrap\.sh$/);
 });

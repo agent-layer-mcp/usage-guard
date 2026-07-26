@@ -70,6 +70,14 @@ export class GuardStore {
         observed_at INTEGER,
         updated_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS notice_state (
+        provider TEXT NOT NULL,
+        surface TEXT NOT NULL,
+        state TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, surface)
+      );
     `);
   }
 
@@ -246,6 +254,31 @@ export class GuardStore {
     return this.getAlertState(provider);
   }
 
+  getNoticeState(provider, surface) {
+    const row = this.database.prepare(`
+      SELECT provider, surface, state, updated_at
+      FROM notice_state WHERE provider = ? AND surface = ?
+    `).get(provider, surface);
+    if (!row) return null;
+    return {
+      provider: row.provider,
+      surface: row.surface,
+      state: row.state,
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  setNoticeState(provider, surface, state, updatedAt = Date.now()) {
+    this.database.prepare(`
+      INSERT INTO notice_state(provider, surface, state, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(provider, surface) DO UPDATE SET
+        state = excluded.state,
+        updated_at = excluded.updated_at
+    `).run(provider, surface, state, updatedAt);
+    return this.getNoticeState(provider, surface);
+  }
+
   getConfig() {
     const rows = this.database.prepare("SELECT key, value FROM config").all();
     const stored = {};
@@ -280,7 +313,7 @@ export class GuardStore {
 
   clear() {
     this.database.exec(
-      "DELETE FROM quota_observations; DELETE FROM context_observations; DELETE FROM decisions; DELETE FROM alert_state;",
+      "DELETE FROM quota_observations; DELETE FROM context_observations; DELETE FROM decisions; DELETE FROM alert_state; DELETE FROM notice_state;",
     );
   }
 

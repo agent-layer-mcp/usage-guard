@@ -129,7 +129,8 @@ manufacture an estimate.
 - Codex CLI: plugin, hooks, MCP, and native status segments.
 - Claude Desktop Code tab, local sessions: plugin, prompt and tool-boundary
   hooks, MCP, aggregate five-hour/weekly cache ingestion, and background macOS
-  notifications.
+  notifications. Active runs receive one in-chat cue when their state changes
+  into `WATCH` or `PROTECT`; repeated tool calls in the same state stay silent.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
 - Claude Desktop SSH and remote sessions: do not assume that the local desktop
   aggregate cache describes the remote account or that provider hooks are

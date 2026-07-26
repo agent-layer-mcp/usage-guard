@@ -123,6 +123,55 @@ test("safe Claude pre-tool hook stays silent", async () => {
   store.close();
 });
 
+test("Claude pre-tool hook shows one chat cue per watch or protect transition", async () => {
+  const now = Date.now();
+  const store = new GuardStore({ filename: ":memory:" });
+  const save = (usedPercent, observedAt) => store.saveSnapshot({
+    provider: "claude",
+    source: "test",
+    observedAt,
+    windows: [{
+      key: "five-hour",
+      label: "5 hour",
+      usedPercent,
+      windowMinutes: 300,
+      resetsAt: null,
+    }],
+  });
+  const input = {
+    hook_event_name: "PreToolUse",
+    tool_name: "Read",
+    session_id: "active-session",
+  };
+
+  save(75, now);
+  const watch = await runProviderHook(store, "claude", input, {
+    claudeDesktop: { platform: "linux" },
+  });
+  assert.match(watch.systemMessage, /WATCH/);
+  assert.match(watch.hookSpecificOutput.additionalContext, /Quality lock is on/i);
+
+  const repeatedWatch = await runProviderHook(store, "claude", input, {
+    claudeDesktop: { platform: "linux" },
+  });
+  assert.deepEqual(repeatedWatch, {});
+
+  save(85, now + 1);
+  const protect = await runProviderHook(store, "claude", input, {
+    claudeDesktop: { platform: "linux" },
+  });
+  assert.match(protect.systemMessage, /PROTECT/);
+
+  const otherSession = await runProviderHook(store, "claude", {
+    ...input,
+    session_id: "other-session",
+  }, {
+    claudeDesktop: { platform: "linux" },
+  });
+  assert.match(otherSession.systemMessage, /PROTECT/);
+  store.close();
+});
+
 test("a stale Claude Desktop cache never blocks a prompt", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-stale-cache-"));
   const cachePath = path.join(root, "plan-usage-history.json");

@@ -51,7 +51,7 @@ stored below `~/.usage-guard/` with user-only directory permissions where the
 operating system supports them.
 
 Use `usage-guard reset` to delete quota observations, decisions, and local alert
-state. Use `usage-guard uninstall` to remove provider integrations, unload the
+or notice state. Use `usage-guard uninstall` to remove provider integrations, unload the
 macOS background monitor, and restore prior settings.
 
 ## Network behavior

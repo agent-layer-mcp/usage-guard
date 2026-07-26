@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2 - 2026-07-26
+
+- Show one in-chat Claude notice when an active tool-using run transitions into
+  `WATCH` or `PROTECT`.
+- Deduplicate notices per Claude session so repeated tool calls do not flood the
+  conversation while separate sessions still receive their own first cue.
+
 ## 0.2.1 - 2026-07-26
 
 - Detect rapid quota burn even when Claude Desktop does not expose a reset

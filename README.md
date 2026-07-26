@@ -41,6 +41,8 @@ The installer:
    plugin hooks and MCP startup do not depend on a Terminal `PATH`.
 6. On macOS, installs a local one-minute background monitor that shows desktop
    notifications when Claude usage escalates to `WATCH`, `PROTECT`, or `QUEUE`.
+   It prefers `terminal-notifier` when available and otherwise uses the built-in
+   AppleScript notification path.
 
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 

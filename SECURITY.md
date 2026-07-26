@@ -47,4 +47,9 @@ cache, writes to the user-only Usage Guard state directory, and may display a
 local notification. It does not run as root and is removed by
 `usage-guard uninstall`.
 
+If Homebrew's `terminal-notifier` is already installed, Usage Guard invokes its
+absolute path for more reliable macOS delivery. It does not install the helper
+or execute a binary discovered from an untrusted desktop `PATH`; only the
+standard Apple Silicon and Intel Homebrew paths are considered.
+
 The dashboard binds to `127.0.0.1`, sends a restrictive content security policy, and exposes no credential-bearing endpoint. Do not proxy it to a public interface.

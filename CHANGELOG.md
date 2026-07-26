@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3 - 2026-07-26
+
+- Prefer `terminal-notifier` for macOS alerts when it is installed, with
+  AppleScript retained as a dependency-free fallback.
+- Detect both Apple Silicon and Intel Homebrew notifier paths without relying on
+  the restricted `PATH` inherited by desktop LaunchAgents.
+
 ## 0.2.2 - 2026-07-26
 
 - Show one in-chat Claude notice when an active tool-using run transitions into

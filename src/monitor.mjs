@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { formatStatusLine } from "./presentation.mjs";
 import { providerDecision, syncClaudeDesktop, syncCodex } from "./service.mjs";
 
@@ -53,6 +54,26 @@ export async function runMonitorCycle(store, options = {}) {
 export function notifyMacOS(notification, options = {}) {
   if ((options.platform || process.platform) !== "darwin") return false;
   const run = options.commandRunner || execFileSync;
+  const terminalNotifier = Object.hasOwn(options, "terminalNotifierPath")
+    ? options.terminalNotifierPath
+    : findTerminalNotifier();
+  if (terminalNotifier) {
+    const args = [
+      "-title", notification.title,
+      "-subtitle", notification.subtitle,
+      "-message", notification.message,
+      "-group", "sh.agentlayer.usage-guard",
+    ];
+    if (["protect", "queue"].includes(notification.state)) {
+      args.push("-sound", "Glass");
+    }
+    run(terminalNotifier, args, {
+      encoding: "utf8",
+      stdio: "ignore",
+    });
+    return true;
+  }
+
   const script = [
     `display notification "${escapeAppleScript(notification.message)}"`,
     `with title "${escapeAppleScript(notification.title)}"`,
@@ -64,6 +85,14 @@ export function notifyMacOS(notification, options = {}) {
     stdio: "ignore",
   });
   return true;
+}
+
+export function findTerminalNotifier(options = {}) {
+  const exists = options.exists || existsSync;
+  return [
+    "/opt/homebrew/bin/terminal-notifier",
+    "/usr/local/bin/terminal-notifier",
+  ].find((candidate) => exists(candidate)) || null;
 }
 
 function controllingWindow(decision) {

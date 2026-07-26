@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runMonitorCycle, notifyMacOS } from "../src/monitor.mjs";
+import {
+  findTerminalNotifier,
+  runMonitorCycle,
+  notifyMacOS,
+} from "../src/monitor.mjs";
 import { GuardStore } from "../src/store.mjs";
 
 test("monitor notifies once on escalation and rearms after returning safe", async () => {
@@ -57,6 +61,7 @@ test("macOS notifier emits a visible AppleScript notification", () => {
     state: "protect",
   }, {
     platform: "darwin",
+    terminalNotifierPath: null,
     commandRunner(command, args) {
       calls.push([command, ...args]);
     },
@@ -66,4 +71,36 @@ test("macOS notifier emits a visible AppleScript notification", () => {
   assert.equal(calls[0][0], "/usr/bin/osascript");
   assert.match(calls[0][2], /display notification/);
   assert.match(calls[0][2], /sound name "Glass"/);
+});
+
+test("macOS notifier prefers terminal-notifier when installed", () => {
+  const calls = [];
+  const shown = notifyMacOS({
+    title: "Usage Guard",
+    subtitle: "Claude: WATCH",
+    message: "Quota pressure",
+    state: "watch",
+  }, {
+    platform: "darwin",
+    terminalNotifierPath: "/opt/homebrew/bin/terminal-notifier",
+    commandRunner(command, args) {
+      calls.push([command, ...args]);
+    },
+  });
+
+  assert.equal(shown, true);
+  assert.equal(calls[0][0], "/opt/homebrew/bin/terminal-notifier");
+  assert.deepEqual(calls[0].slice(1), [
+    "-title", "Usage Guard",
+    "-subtitle", "Claude: WATCH",
+    "-message", "Quota pressure",
+    "-group", "sh.agentlayer.usage-guard",
+  ]);
+});
+
+test("terminal-notifier discovery checks Apple Silicon and Intel Homebrew paths", () => {
+  assert.equal(findTerminalNotifier({
+    exists: (candidate) => candidate === "/usr/local/bin/terminal-notifier",
+  }), "/usr/local/bin/terminal-notifier");
+  assert.equal(findTerminalNotifier({ exists: () => false }), null);
 });

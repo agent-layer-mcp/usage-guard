@@ -20,8 +20,33 @@ export async function syncCodex(store, options = {}) {
 
 export function syncClaudeDesktop(store, options = {}) {
   const snapshot = readClaudeDesktopUsage(options);
-  if (snapshot?.windows.length) store.saveSnapshot(snapshot);
-  return snapshot;
+  if (!snapshot?.windows.length) return snapshot;
+
+  let retainedAuthoritativeReset = false;
+  const windows = snapshot.windows.map((window) => {
+    if (window.resetsAt != null) return window;
+    const authoritative = store.latestFutureReset(
+      "claude",
+      window.key,
+      snapshot.observedAt,
+      "claude-status-line",
+    );
+    if (
+      !authoritative
+      || window.usedPercent + 1 < authoritative.usedPercent
+    ) return window;
+    retainedAuthoritativeReset = true;
+    return { ...window, resetsAt: authoritative.resetsAt };
+  });
+  const enriched = {
+    ...snapshot,
+    windows,
+    source: retainedAuthoritativeReset
+      ? "claude-desktop-aggregate-cache+status-line-reset"
+      : snapshot.source,
+  };
+  store.saveSnapshot(enriched);
+  return enriched;
 }
 
 export function providerDecision(store, provider, options = {}) {

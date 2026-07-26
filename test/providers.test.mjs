@@ -9,7 +9,7 @@ import {
 } from "../src/providers/claude-desktop.mjs";
 import { parseClaudeStatusLine } from "../src/providers/claude.mjs";
 import { parseCodexRateLimits } from "../src/providers/codex.mjs";
-import { ingestClaudeStatus } from "../src/service.mjs";
+import { ingestClaudeStatus, syncClaudeDesktop } from "../src/service.mjs";
 import { GuardStore } from "../src/store.mjs";
 
 test("normalizes Claude five-hour and weekly status-line windows", () => {
@@ -97,6 +97,70 @@ test("never fabricates a Desktop reset from an earlier aggregate usage drop", ()
   });
 
   assert.deepEqual(snapshot.windows.map((window) => window.resetsAt), [null, null]);
+});
+
+test("retains an authoritative status-line reset across Desktop percentage refreshes", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-claude-reset-"));
+  const cachePath = path.join(root, "plan-usage-history.json");
+  const now = Date.UTC(2026, 6, 27, 0, 0, 0);
+  const resetAt = now + 4 * 60 * 60_000;
+  const store = new GuardStore({ filename: ":memory:" });
+
+  ingestClaudeStatus(store, {
+    session_id: "authoritative-session",
+    rate_limits: {
+      five_hour: { used_percentage: 3, resets_at: resetAt / 1_000 },
+      seven_day: { used_percentage: 30, resets_at: (now + 5 * 24 * 60 * 60_000) / 1_000 },
+    },
+  }, now);
+  writeFileSync(cachePath, JSON.stringify({
+    version: 2,
+    samples: [{
+      t: now + 5 * 60_000,
+      org: "active",
+      u: { fh: 4, sd: 31 },
+    }],
+  }));
+
+  const snapshot = syncClaudeDesktop(store, { cachePath });
+  assert.equal(snapshot.source, "claude-desktop-aggregate-cache+status-line-reset");
+  assert.equal(snapshot.windows[0].resetsAt, resetAt);
+  assert.equal(store.latest("claude")[0].resetsAt, resetAt);
+  store.close();
+});
+
+test("does not carry an expired or rolled-over status-line reset", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-claude-rollover-"));
+  const cachePath = path.join(root, "plan-usage-history.json");
+  const now = Date.UTC(2026, 6, 27, 0, 0, 0);
+  const resetAt = now + 60 * 60_000;
+  const store = new GuardStore({ filename: ":memory:" });
+
+  ingestClaudeStatus(store, {
+    rate_limits: {
+      five_hour: { used_percentage: 80, resets_at: resetAt / 1_000 },
+    },
+  }, now);
+  writeFileSync(cachePath, JSON.stringify({
+    version: 2,
+    samples: [{
+      t: now + 30 * 60_000,
+      org: "active",
+      u: { fh: 2 },
+    }],
+  }));
+  assert.equal(syncClaudeDesktop(store, { cachePath }).windows[0].resetsAt, null);
+
+  writeFileSync(cachePath, JSON.stringify({
+    version: 2,
+    samples: [{
+      t: resetAt + 60_000,
+      org: "active",
+      u: { fh: 1 },
+    }],
+  }));
+  assert.equal(syncClaudeDesktop(store, { cachePath }).windows[0].resetsAt, null);
+  store.close();
 });
 
 test("fails open when the Claude Desktop cache is absent or malformed", () => {

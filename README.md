@@ -111,11 +111,18 @@ their timestamps, ignores unknown fields, and never stores the cache's
 organization identifier. This is an undocumented desktop cache, so malformed or
 changed schemas fail open as a missing signal.
 
-The Desktop cache does not include reset timestamps. Usage Guard therefore
-reports the reset as unknown; it never treats an earlier aggregate drop as the
-anchor for a later window. It still projects minutes until the configured
-reserve from multiple recent aggregate-burn horizons: `WATCH` within 90 minutes
-and `PROTECT` within 30 minutes by default.
+The Desktop cache does not include reset timestamps. Claude Code `v2.1.80` and
+later provides authoritative `rate_limits.five_hour.resets_at` and
+`rate_limits.seven_day.resets_at` values to its supported status-line JSON.
+Usage Guard records those values and can retain a still-future reset while the
+Desktop cache refreshes the corresponding percentage. It discards that reset
+after expiry or an observed usage rollover. Before Claude Code supplies an
+authoritative sample, Usage Guard reports the reset as unknown; it never treats
+an earlier aggregate drop as the anchor for a later window.
+
+Usage Guard still projects minutes until the configured reserve from multiple
+recent aggregate-burn horizons: `WATCH` within 90 minutes and `PROTECT` within
+30 minutes by default.
 
 ### Optional Claude request diagnostics
 

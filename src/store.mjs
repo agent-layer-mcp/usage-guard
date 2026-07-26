@@ -175,6 +175,24 @@ export class GuardStore {
     return (provider ? statement.all(provider) : statement.all()).map(mapObservation);
   }
 
+  latestFutureReset(provider, windowKey, now = Date.now(), source = null) {
+    if (!provider || !windowKey) {
+      throw new TypeError("A provider and window key are required.");
+    }
+    const sourceClause = source ? "AND source = ?" : "";
+    const statement = this.database.prepare(`
+      SELECT * FROM quota_observations
+      WHERE provider = ? AND window_key = ?
+        AND resets_at IS NOT NULL AND resets_at > ?
+        ${sourceClause}
+      ORDER BY observed_at DESC LIMIT 1
+    `);
+    const row = source
+      ? statement.get(provider, windowKey, now, source)
+      : statement.get(provider, windowKey, now);
+    return row ? mapObservation(row) : null;
+  }
+
   history(provider, windowKey, resetAt, since) {
     if (resetAt == null) {
       return this.database.prepare(`

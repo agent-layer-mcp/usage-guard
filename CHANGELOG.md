@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.5 - 2026-07-27
+
+- Preserve authoritative Claude Code status-line reset timestamps across
+  background Desktop percentage refreshes.
+- Discard retained reset metadata when it expires or the usage percentage
+  indicates that the tracked window has rolled over.
+- Keep reset time explicitly unknown until Claude Code supplies the supported
+  `rate_limits.*.resets_at` fields.
+
 ## 0.2.4 - 2026-07-26
 
 - Stop fabricating Claude Desktop reset times from old aggregate usage drops;

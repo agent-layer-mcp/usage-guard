@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { guardHome } from "./config.mjs";
 import { formatStatusLine } from "./presentation.mjs";
+import { readPxpipeTelemetry } from "./providers/pxpipe.mjs";
 import { providerDecision, syncClaudeDesktop, syncCodex } from "./service.mjs";
 
 const STATE_ORDER = Object.freeze({
@@ -34,10 +35,16 @@ export async function runMonitorCycle(store, options = {}) {
       && (!previous || STATE_ORDER[decision.state] > STATE_ORDER[previous.state]);
 
     if (shouldNotify) {
+      const request = provider === "claude"
+        ? readPxpipeTelemetry({ ...options.pxpipe, now: options.now })
+        : null;
       notifier({
         title: "Usage Guard",
         subtitle: `${providerName(provider)}: ${decision.state.toUpperCase()}`,
-        message: `${formatStatusLine(decision, { color: false })}. ${decision.reason}`,
+        message: [
+          `${formatStatusLine(decision, { color: false })}. ${decision.reason}`,
+          request && !request.stale ? requestDiagnostic(request) : null,
+        ].filter(Boolean).join(" "),
         state: decision.state,
       });
     }
@@ -139,6 +146,16 @@ function isAlertState(state) {
 
 function providerName(provider) {
   return provider === "claude" ? "Claude" : "Codex";
+}
+
+function requestDiagnostic(request) {
+  const context = Number.isFinite(request.contextTokens)
+    ? `${Math.round(request.contextTokens / 1_000)}k context`
+    : null;
+  const images = Number.isFinite(request.imageCount) && request.imageCount > 0
+    ? `${Math.round(request.imageCount)} images resident`
+    : null;
+  return [context, images].filter(Boolean).join("; ");
 }
 
 function escapeAppleScript(value) {

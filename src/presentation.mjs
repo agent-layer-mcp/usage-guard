@@ -56,8 +56,24 @@ export function formatStatusText(status) {
     output.push(`  Why: ${provider.reason}`);
     output.push("");
   }
+  const request = status.diagnostics?.claudeRequest;
+  if (request && !request.stale) {
+    output.push("Claude request diagnostics (local pxpipe)");
+    output.push(`  Context tokens      ${formatNumber(request.contextTokens)}`);
+    output.push(`  Resident images     ${formatNumber(request.imageCount)}`);
+    output.push(`  Weighted request    ${formatNumber(request.weightedInputEquivalent)} directional input-equivalents`);
+    if (request.microcompactDisabled) {
+      output.push("  Microcompact        disabled in this process environment");
+    }
+    output.push(`  Caveat              ${request.weighting.caveat}`);
+    output.push("");
+  }
   output.push("Local only: no prompts, source code, credentials, or telemetry stored.");
   return output.join("\n");
+}
+
+function formatNumber(value) {
+  return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "unknown";
 }
 
 function shortLabel(window) {

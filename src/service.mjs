@@ -2,6 +2,7 @@ import { buildProviderDecision, buildStatus } from "./policy.mjs";
 import { parseClaudeStatusLine } from "./providers/claude.mjs";
 import { readClaudeDesktopUsage } from "./providers/claude-desktop.mjs";
 import { fetchCodexSnapshot } from "./providers/codex.mjs";
+import { readPxpipeTelemetry } from "./providers/pxpipe.mjs";
 
 export function ingestClaudeStatus(store, input, now = Date.now()) {
   const snapshot = parseClaudeStatusLine(input, now);
@@ -28,5 +29,21 @@ export function providerDecision(store, provider, options = {}) {
 }
 
 export function completeStatus(store, options = {}) {
-  return buildStatus(store, options);
+  const status = buildStatus(store, options);
+  const claudeRequest = readPxpipeTelemetry({
+    ...options.pxpipe,
+    now: options.now,
+    env: options.env || process.env,
+  });
+  return {
+    ...status,
+    privacy: {
+      ...status.privacy,
+      localRequestMetadataRead: Boolean(claudeRequest),
+      requestMetadataStored: false,
+    },
+    diagnostics: {
+      claudeRequest,
+    },
+  };
 }

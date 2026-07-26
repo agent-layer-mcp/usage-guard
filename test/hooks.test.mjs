@@ -71,6 +71,58 @@ test("Claude Desktop hook synchronizes aggregate usage before protecting reserve
   store.close();
 });
 
+test("Claude pre-tool hook stops an active run at the protected reserve", async () => {
+  const now = Date.now();
+  const store = new GuardStore({ filename: ":memory:" });
+  store.saveSnapshot({
+    provider: "claude",
+    source: "test",
+    observedAt: now,
+    windows: [{
+      key: "five-hour",
+      label: "5 hour",
+      usedPercent: 96,
+      windowMinutes: 300,
+      resetsAt: null,
+    }],
+  });
+
+  const output = await runProviderHook(store, "claude", {
+    hook_event_name: "PreToolUse",
+    tool_name: "Read",
+  }, { claudeDesktop: { platform: "linux" } });
+
+  assert.equal(output.continue, false);
+  assert.match(output.stopReason, /tool boundary/i);
+  assert.equal(output.hookSpecificOutput, undefined);
+  store.close();
+});
+
+test("safe Claude pre-tool hook stays silent", async () => {
+  const now = Date.now();
+  const store = new GuardStore({ filename: ":memory:" });
+  store.saveSnapshot({
+    provider: "claude",
+    source: "test",
+    observedAt: now,
+    windows: [{
+      key: "five-hour",
+      label: "5 hour",
+      usedPercent: 12,
+      windowMinutes: 300,
+      resetsAt: null,
+    }],
+  });
+
+  const output = await runProviderHook(store, "claude", {
+    hook_event_name: "PreToolUse",
+    tool_name: "Read",
+  }, { claudeDesktop: { platform: "linux" } });
+
+  assert.deepEqual(output, {});
+  store.close();
+});
+
 test("a stale Claude Desktop cache never blocks a prompt", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-stale-cache-"));
   const cachePath = path.join(root, "plan-usage-history.json");

@@ -1,0 +1,84 @@
+import { execFileSync } from "node:child_process";
+import { formatStatusLine } from "./presentation.mjs";
+import { providerDecision, syncClaudeDesktop, syncCodex } from "./service.mjs";
+
+const STATE_ORDER = Object.freeze({
+  missing: -1,
+  stale: 0,
+  safe: 1,
+  watch: 2,
+  protect: 3,
+  queue: 4,
+});
+
+export async function runMonitorCycle(store, options = {}) {
+  const providers = options.providers || ["claude"];
+  const notifier = options.notifier || notifyMacOS;
+  const results = [];
+
+  for (const provider of providers) {
+    try {
+      if (provider === "claude") syncClaudeDesktop(store, options.claudeDesktop);
+      else if (provider === "codex") await syncCodex(store, options.codex);
+    } catch {
+      // Missing or changed provider signals remain visible as stale/missing state.
+    }
+
+    const decision = providerDecision(store, provider, { now: options.now });
+    const previous = store.getAlertState(provider);
+    const controlling = controllingWindow(decision);
+    const shouldNotify = isAlertState(decision.state)
+      && (!previous || STATE_ORDER[decision.state] > STATE_ORDER[previous.state]);
+
+    if (shouldNotify) {
+      notifier({
+        title: "Usage Guard",
+        subtitle: `${providerName(provider)}: ${decision.state.toUpperCase()}`,
+        message: `${formatStatusLine(decision, { color: false })}. ${decision.reason}`,
+        state: decision.state,
+      });
+    }
+
+    store.setAlertState(provider, decision.state, {
+      windowKey: controlling?.key,
+      observedAt: controlling?.observedAt,
+      updatedAt: options.now ?? Date.now(),
+    });
+    results.push({ provider, decision, notified: shouldNotify });
+  }
+
+  return results;
+}
+
+export function notifyMacOS(notification, options = {}) {
+  if ((options.platform || process.platform) !== "darwin") return false;
+  const run = options.commandRunner || execFileSync;
+  const script = [
+    `display notification "${escapeAppleScript(notification.message)}"`,
+    `with title "${escapeAppleScript(notification.title)}"`,
+    `subtitle "${escapeAppleScript(notification.subtitle)}"`,
+    ...(["protect", "queue"].includes(notification.state) ? ['sound name "Glass"'] : []),
+  ].join(" ");
+  run("/usr/bin/osascript", ["-e", script], {
+    encoding: "utf8",
+    stdio: "ignore",
+  });
+  return true;
+}
+
+function controllingWindow(decision) {
+  return [...(decision.windows || [])]
+    .sort((a, b) => STATE_ORDER[b.state] - STATE_ORDER[a.state])[0] || null;
+}
+
+function isAlertState(state) {
+  return ["watch", "protect", "queue"].includes(state);
+}
+
+function providerName(provider) {
+  return provider === "claude" ? "Claude" : "Codex";
+}
+
+function escapeAppleScript(value) {
+  return String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}

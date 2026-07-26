@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.2.1";
 export const PRODUCT_NAME = "Usage Guard";
 
 export const DEFAULT_CONFIG = Object.freeze({
@@ -9,6 +9,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   qualityLock: true,
   fiveHourReservePercent: 8,
   weeklyReservePercent: 5,
+  rapidBurnWatchMinutes: 90,
+  rapidBurnProtectMinutes: 30,
   contextWatchPercent: 70,
   contextProtectPercent: 85,
   staleAfterMinutes: 15,
@@ -37,11 +39,23 @@ export function normalizeConfig(input = {}) {
     contextWatchPercent,
     clampNumber(merged.contextProtectPercent, 1, 100, 85),
   );
+  const rapidBurnProtectMinutes = clampNumber(
+    merged.rapidBurnProtectMinutes,
+    5,
+    120,
+    30,
+  );
+  const rapidBurnWatchMinutes = Math.max(
+    rapidBurnProtectMinutes,
+    clampNumber(merged.rapidBurnWatchMinutes, 10, 240, 90),
+  );
   return {
     enforcement,
     qualityLock: merged.qualityLock !== false,
     fiveHourReservePercent: clampNumber(merged.fiveHourReservePercent, 0, 30, 8),
     weeklyReservePercent: clampNumber(merged.weeklyReservePercent, 0, 30, 5),
+    rapidBurnWatchMinutes,
+    rapidBurnProtectMinutes,
     contextWatchPercent,
     contextProtectPercent,
     staleAfterMinutes: clampNumber(merged.staleAfterMinutes, 1, 240, 15),

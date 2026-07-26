@@ -50,7 +50,9 @@ Installation backups, absolute local runtime paths, and the rollback record are
 stored below `~/.usage-guard/` with user-only directory permissions where the
 operating system supports them.
 
-Use `usage-guard reset` to delete quota observations and decisions. Use `usage-guard uninstall` to remove provider integrations and restore prior settings.
+Use `usage-guard reset` to delete quota observations, decisions, and local alert
+state. Use `usage-guard uninstall` to remove provider integrations, unload the
+macOS background monitor, and restore prior settings.
 
 ## Network behavior
 

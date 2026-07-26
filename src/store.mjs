@@ -62,6 +62,14 @@ export class GuardStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS alert_state (
+        provider TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        window_key TEXT,
+        observed_at INTEGER,
+        updated_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -204,6 +212,40 @@ export class GuardStore {
     }));
   }
 
+  getAlertState(provider) {
+    const row = this.database.prepare(`
+      SELECT provider, state, window_key, observed_at, updated_at
+      FROM alert_state WHERE provider = ?
+    `).get(provider);
+    if (!row) return null;
+    return {
+      provider: row.provider,
+      state: row.state,
+      windowKey: row.window_key,
+      observedAt: numberOrNull(row.observed_at),
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  setAlertState(provider, state, options = {}) {
+    this.database.prepare(`
+      INSERT INTO alert_state(provider, state, window_key, observed_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(provider) DO UPDATE SET
+        state = excluded.state,
+        window_key = excluded.window_key,
+        observed_at = excluded.observed_at,
+        updated_at = excluded.updated_at
+    `).run(
+      provider,
+      state,
+      options.windowKey || null,
+      integerOrNull(options.observedAt),
+      options.updatedAt ?? Date.now(),
+    );
+    return this.getAlertState(provider);
+  }
+
   getConfig() {
     const rows = this.database.prepare("SELECT key, value FROM config").all();
     const stored = {};
@@ -238,7 +280,7 @@ export class GuardStore {
 
   clear() {
     this.database.exec(
-      "DELETE FROM quota_observations; DELETE FROM context_observations; DELETE FROM decisions;",
+      "DELETE FROM quota_observations; DELETE FROM context_observations; DELETE FROM decisions; DELETE FROM alert_state;",
     );
   }
 

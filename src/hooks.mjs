@@ -27,6 +27,15 @@ export async function runProviderHook(store, provider, input, options = {}) {
 
   const decision = providerDecision(store, provider, { prompt, sessionId });
   const message = formatStatusLine(decision, { color: false });
+  if (eventName === "PreToolUse") {
+    if (!decision.blocked) return {};
+    const reason = `Usage Guard stopped this run at a tool boundary to protect your ${decision.provider} reserve. ${decision.reason}`;
+    return {
+      systemMessage: `${message}. ${decision.reason}`,
+      continue: false,
+      stopReason: reason,
+    };
+  }
   const output = {
     systemMessage: decision.state === "safe" ? undefined : `${message}. ${decision.reason}`,
     hookSpecificOutput: {

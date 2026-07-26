@@ -54,6 +54,60 @@ test("marks fast burn as protect before the reserve is reached", () => {
   assert.ok(window.paceRatio > 1.3);
 });
 
+test("protects rapid Claude Desktop burn without reset metadata", () => {
+  const now = Date.UTC(2026, 6, 26, 20, 52);
+  const observation = {
+    provider: "claude",
+    key: "five-hour",
+    label: "5 hour",
+    usedPercent: 53,
+    windowMinutes: 300,
+    resetsAt: null,
+    observedAt: now,
+  };
+  const window = evaluateWindow(observation, [
+    { ...observation, usedPercent: 13, observedAt: now - 10 * 60_000 },
+    observation,
+  ], DEFAULT_CONFIG, now);
+
+  assert.equal(window.state, "protect");
+  assert.equal(window.paceRatio, null);
+  assert.ok(window.minutesUntilReserve < 10);
+});
+
+test("replays the reported Claude Desktop exhaustion as watch then protect", () => {
+  const store = new GuardStore({ filename: ":memory:" });
+  const base = Date.UTC(2026, 6, 25, 20, 32, 7);
+  const points = [
+    [0, 0, "safe"],
+    [5, 7, "watch"],
+    [10, 13, "watch"],
+    [20, 53, "protect"],
+    [25, 75, "protect"],
+    [45, 78, "watch"],
+    [50, 96, "queue"],
+  ];
+
+  for (const [minutes, usedPercent, expected] of points) {
+    const now = base + minutes * 60_000;
+    store.saveSnapshot({
+      provider: "claude",
+      source: "claude-desktop-cache",
+      observedAt: now,
+      windows: [{
+        key: "five-hour",
+        label: "5 hour",
+        usedPercent,
+        windowMinutes: 300,
+        resetsAt: null,
+      }],
+    });
+    const decision = buildProviderDecision(store, "claude", { now });
+    assert.equal(decision.quotaState, expected, `${usedPercent}% should be ${expected}`);
+  }
+  store.close();
+});
+
 test("estimates burn from the nearest useful recent sample", () => {
   const now = Date.UTC(2026, 6, 14);
   const observation = {

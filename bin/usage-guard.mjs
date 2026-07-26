@@ -12,6 +12,7 @@ import {
   uninstallIntegrations,
 } from "../src/install.mjs";
 import { runMcpServer } from "../src/mcp.mjs";
+import { runMonitorCycle } from "../src/monitor.mjs";
 import { formatStatusLine, formatStatusText } from "../src/presentation.mjs";
 import {
   completeStatus,
@@ -92,6 +93,32 @@ try {
       store.close();
       process.exit(0);
     });
+  } else if (command === "monitor") {
+    const providerIndex = args.indexOf("--provider");
+    const provider = providerIndex >= 0 ? args[providerIndex + 1] : "claude";
+    if (!["claude", "codex"].includes(provider)) {
+      throw new Error("Monitor provider must be `claude` or `codex`.");
+    }
+    const runOnce = async () => {
+      const results = await runMonitorCycle(store, { providers: [provider] });
+      if (!args.includes("--quiet")) {
+        console.log(formatStatusLine(results[0].decision, { color: false }));
+      }
+    };
+    if (args.includes("--once")) {
+      await runOnce();
+      store.close();
+    } else {
+      await runOnce();
+      const timer = setInterval(runOnce, 60_000);
+      const close = () => {
+        clearInterval(timer);
+        store.close();
+        process.exit(0);
+      };
+      process.on("SIGINT", close);
+      process.on("SIGTERM", close);
+    }
   } else if (command === "config") {
     if (!args.length) console.log(JSON.stringify(store.getConfig(), null, 2));
     else {
@@ -315,6 +342,7 @@ Commands:
   demo                          Load local example readings
   reset                         Clear local readings and decision history
   mcp                           Run the local MCP server over stdio
+  monitor [--once]              Monitor aggregate usage and show macOS alerts
 
 Integration commands used by the plugins:
   statusline claude

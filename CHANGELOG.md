@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1 - 2026-07-26
+
+- Detect rapid quota burn even when Claude Desktop does not expose a reset
+  timestamp, warning when the protected reserve is projected within 90 minutes
+  and protecting when it is projected within 30 minutes.
+- Recheck Claude quota at tool boundaries so a long agentic run can be stopped
+  after it reaches the protected reserve instead of waiting for the next prompt.
+- Install a local macOS background monitor that checks Claude's aggregate usage
+  once per minute and sends visible notifications on `WATCH`, `PROTECT`, and
+  `QUEUE` escalation.
+- Persist only notification state needed to suppress duplicate alerts.
+- Add a regression replay for a real five-hour window that rose from 13% to 53%
+  in ten minutes and reached 100% during one desktop task.
+
 ## 0.2.0 - 2026-07-25
 
 - Preserve Claude context observations even when quota windows are absent.

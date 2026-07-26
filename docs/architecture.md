@@ -8,9 +8,12 @@ Usage Guard is one local Node.js process with four entry surfaces:
 3. On macOS, Claude Desktop hooks defensively ingest its local aggregate plan
    history because the Desktop Code surface does not run the custom status-line
    command.
-4. Claude and Codex lifecycle hooks ask the policy engine for a decision before each prompt.
-5. The MCP server exposes status and decisions to provider desktop sessions.
-6. A `/bin/sh` bootstrap reads the installer-recorded Node path before either
+4. Claude and Codex lifecycle hooks ask the policy engine for a decision before
+   each prompt; Claude also rechecks at tool boundaries.
+5. A macOS LaunchAgent checks Claude's aggregate cache once per minute and shows
+   a local notification when policy escalates.
+6. The MCP server exposes status and decisions to provider desktop sessions.
+7. A `/bin/sh` bootstrap reads the installer-recorded Node path before either
    plugin router starts, avoiding dependence on the desktop process `PATH`.
 
 ## Data flow
@@ -37,6 +40,8 @@ The task classifier returns only `high-reasoning`, `standard`, `mechanical`, or 
 Usage Guard can:
 
 - preserve a reserve by blocking a new prompt
+- stop a Claude agentic run at a tool boundary after the reserve is reached
+- show local macOS notifications while Claude Desktop is working
 - inject pacing guidance into a turn
 - configure Claude and Codex status-line surfaces
 - suggest bounded context and concurrency
@@ -53,10 +58,11 @@ hook path. Usage Guard relies on host auto-compaction in those surfaces and
 does not read transcript contents to estimate context.
 
 The Claude Desktop cache adapter does not need a reset timestamp to enforce the
-reserve. It infers one only from a same-organization percentage drop of at least
-five points between samples no more than 15 minutes apart. Without that
-evidence, pace forecasting remains unavailable while reserve thresholds still
-apply.
+reserve or detect rapid burn. It infers a reset only from a same-organization
+percentage drop of at least five points between samples no more than 15 minutes
+apart. Without reset evidence, it projects minutes until reserve directly from
+recent burn and escalates at configurable 90-minute watch and 30-minute protect
+thresholds.
 
 ## Forecasting
 
@@ -66,6 +72,12 @@ The policy engine compares observed quota burn with the burn that can be sustain
 usable = max(0, 100 - used - reserve)
 sustainable burn = usable / minutes until reset
 pace ratio = observed burn / sustainable burn
+```
+
+When reset is unknown:
+
+```text
+minutes until reserve = usable / observed burn
 ```
 
 The most pressured live quota bucket controls reserve enforcement. Fresh

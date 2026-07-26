@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse } from "smol-toml";
 import {
+  configureBackgroundMonitor,
   inspectConfiguredIntegrations,
   installIntegrations,
   uninstallIntegrations,
@@ -40,6 +41,8 @@ test("install and uninstall restore prior status-line settings", () => {
     stateHome,
     recordPath,
     installPlugins: false,
+    installMonitor: false,
+    platform: "linux",
     runtime: {
       command: process.execPath,
       argsPrefix: [cliPath],
@@ -57,8 +60,8 @@ test("install and uninstall restore prior status-line settings", () => {
   );
   assert.ok(installedCodex.tui.status_line.includes("five-hour-limit"));
   assert.deepEqual(
-    inspectConfiguredIntegrations({ homeDir: home, recordPath }).map((check) => check.ok),
-    [true, true, true, true, true],
+    inspectConfiguredIntegrations({ homeDir: home, recordPath, platform: "linux" }).map((check) => check.ok),
+    [true, true, true, true, true, true],
   );
   assert.equal(
     readFileSync(path.join(stateHome, "node-runtime"), "utf8").trim(),
@@ -119,6 +122,7 @@ test("installer refreshes an existing Claude plugin version", () => {
     stateHome: path.join(root, "state"),
     recordPath: path.join(root, "state", "install-record.json"),
     packageRoot: "/tmp/usage-guard-package",
+    installMonitor: false,
     runtime: {
       command: process.execPath,
       argsPrefix: ["/tmp/usage-guard.mjs"],
@@ -131,4 +135,33 @@ test("installer refreshes an existing Claude plugin version", () => {
 
   assert.ok(calls.some((call) => call.join(" ") ===
     "claude plugin update usage-guard@agent-layer --scope user"));
+});
+
+test("macOS monitor installs a one-minute LaunchAgent with the absolute runtime", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-monitor-"));
+  const calls = [];
+  const runtime = {
+    command: process.execPath,
+    argsPrefix: ["/tmp/usage guard.mjs"],
+  };
+  const monitor = configureBackgroundMonitor({
+    home: path.join(root, "home"),
+    stateHome: path.join(root, "state"),
+    runtime,
+    platform: "darwin",
+    uid: 501,
+    commandRunner(command, args) {
+      calls.push([command, ...args]);
+      return { ok: true };
+    },
+  });
+
+  const plist = readFileSync(monitor.path, "utf8");
+  assert.equal(monitor.enabled, true);
+  assert.match(plist, /sh\.agentlayer\.usage-guard\.monitor/);
+  assert.match(plist, /<integer>60<\/integer>/);
+  assert.match(plist, new RegExp(process.execPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(plist, /<string>monitor<\/string>/);
+  assert.match(plist, /<string>--once<\/string>/);
+  assert.ok(calls.some((call) => call[1] === "bootstrap"));
 });

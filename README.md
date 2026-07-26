@@ -39,6 +39,8 @@ The installer:
 4. Backs up affected settings and records the exact values needed for rollback.
 5. Records absolute Node and CLI paths and installs a `/bin/sh` bootstrap so
    plugin hooks and MCP startup do not depend on a Terminal `PATH`.
+6. On macOS, installs a local one-minute background monitor that shows desktop
+   notifications when Claude usage escalates to `WATCH`, `PROTECT`, or `QUEUE`.
 
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 
@@ -105,7 +107,9 @@ changed schemas fail open as a missing signal.
 
 The Desktop cache does not include reset timestamps. Usage Guard infers one only
 from a nearby substantial downward edge for the same aggregate organization
-stream. Otherwise it preserves the reserve without forecasting pace to reset.
+stream. When reset time remains unknown, it still projects minutes until the
+configured reserve from recent aggregate burn: `WATCH` within 90 minutes and
+`PROTECT` within 30 minutes by default.
 
 ### Codex
 
@@ -123,8 +127,9 @@ manufacture an estimate.
 - Codex Desktop Work/Codex sessions: local plugin, hooks, MCP, and native status
   segments.
 - Codex CLI: plugin, hooks, MCP, and native status segments.
-- Claude Desktop Code tab, local sessions: plugin, hooks, MCP, and aggregate
-  five-hour/weekly cache ingestion on macOS.
+- Claude Desktop Code tab, local sessions: plugin, prompt and tool-boundary
+  hooks, MCP, aggregate five-hour/weekly cache ingestion, and background macOS
+  notifications.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
 - Claude Desktop SSH and remote sessions: do not assume that the local desktop
   aggregate cache describes the remote account or that provider hooks are
@@ -154,8 +159,10 @@ the value.
 Usage Guard materially reduces surprise exhaustion when provider observations
 are fresh. It cannot guarantee that an account never reaches a provider limit:
 another device or application can consume the same quota, providers can omit a
-window, and hooks cannot stop work that is already running. Missing or stale
-signals are shown explicitly and never produce a hard block.
+window, and no plugin can interrupt a single model generation before the host
+reaches a lifecycle or tool boundary. Claude tool-boundary hooks can stop a
+long agentic run once the reserve is reached. Missing or stale signals are shown
+explicitly and never produce a hard block.
 
 ## Privacy
 
@@ -172,7 +179,8 @@ lifecycle payloads, local session identifiers, aggregate context percentage,
 policy decisions, and local configuration in
 `~/.usage-guard/usage-guard.sqlite3`.
 
-On macOS it may read Claude Desktop's local aggregate plan history at
+On macOS its hook and one-minute background monitor may read Claude Desktop's
+local aggregate plan history at
 `~/Library/Application Support/Claude/plan-usage-history.json`. Usage Guard
 stores only normalized percentages and timestamps from supported fields. It
 does not store organization identifiers or unknown cache fields.
@@ -187,6 +195,7 @@ npm uninstall --global @agent-layer/usage-guard
 ```
 
 The uninstall command removes both plugin integrations and restores the prior status-line settings without replacing unrelated current settings.
+On macOS it also unloads and removes the Usage Guard background monitor.
 
 ## Development
 

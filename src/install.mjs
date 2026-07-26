@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse } from "smol-toml";
@@ -11,6 +18,7 @@ const CODEX_STATUS_ITEMS = [
   "five-hour-limit",
   "weekly-limit",
 ];
+const MONITOR_LABEL = "sh.agentlayer.usage-guard.monitor";
 
 export function installIntegrations(options = {}) {
   const home = options.homeDir || os.homedir();
@@ -34,6 +42,15 @@ export function installIntegrations(options = {}) {
     ),
     codex: configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
   };
+  record.monitor = configureBackgroundMonitor({
+    home,
+    stateHome,
+    runtime,
+    enabled: options.installMonitor !== false,
+    platform: options.platform,
+    uid: options.uid,
+    commandRunner: options.commandRunner || runCommand,
+  });
 
   if (options.installPlugins !== false && packageRoot) {
     record.plugins = installPlugins(packageRoot, options.commandRunner || runCommand);
@@ -48,6 +65,11 @@ export function uninstallIntegrations(options = {}) {
   const record = JSON.parse(readFileSync(recordPath, "utf8"));
   restoreClaude(record.claude);
   restoreCodex(record.codex);
+  restoreBackgroundMonitor(record.monitor, {
+    platform: options.platform,
+    uid: options.uid,
+    commandRunner: options.commandRunner || runCommand,
+  });
   if (options.removePlugins !== false) removePlugins(options.commandRunner || runCommand);
   return record;
 }
@@ -72,6 +94,7 @@ export function configureClaude(
 
 export function inspectConfiguredIntegrations(options = {}) {
   const home = options.homeDir || os.homedir();
+  const platform = options.platform || process.platform;
   const recordPath = options.recordPath || installRecordPath(options.env);
   const settingsPath = path.join(home, ".claude", "settings.json");
   const configPath = path.join(home, ".codex", "config.toml");
@@ -106,6 +129,10 @@ export function inspectConfiguredIntegrations(options = {}) {
     && path.isAbsolute(bootstrapRuntime)
     && existsSync(bootstrapRuntime),
   );
+  const monitorPath = record.monitor?.path
+    || path.join(home, "Library", "LaunchAgents", `${MONITOR_LABEL}.plist`);
+  const monitorReady = platform !== "darwin"
+    || Boolean(record.monitor?.enabled && existsSync(monitorPath));
 
   return [
     {
@@ -139,7 +166,52 @@ export function inspectConfiguredIntegrations(options = {}) {
       ok: CODEX_STATUS_ITEMS.every((item) => codexItems.includes(item)),
       detail: codexItems.length ? codexItems.join(", ") : "not configured",
     },
+    {
+      label: "Desktop monitor",
+      ok: monitorReady,
+      detail: platform !== "darwin"
+        ? "not applicable on this platform"
+        : monitorReady
+          ? "checks aggregate Claude usage every minute"
+          : "rerun `usage-guard install` to enable macOS alerts",
+    },
   ];
+}
+
+export function configureBackgroundMonitor(options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== "darwin" || options.enabled === false || !options.runtime) {
+    return { enabled: false, platform };
+  }
+
+  const home = options.home || os.homedir();
+  const stateHome = options.stateHome || guardHome();
+  const plistPath = path.join(home, "Library", "LaunchAgents", `${MONITOR_LABEL}.plist`);
+  const run = options.commandRunner || runCommand;
+  const uid = options.uid ?? process.getuid?.();
+  mkdirSync(path.dirname(plistPath), { recursive: true });
+  mkdirSync(stateHome, { recursive: true, mode: 0o700 });
+  const existing = existsSync(plistPath) ? readFileSync(plistPath, "utf8") : null;
+  const previous = existing?.includes(`<string>${MONITOR_LABEL}</string>`) ? null : existing;
+  const plist = monitorPlist({
+    runtime: options.runtime,
+    stateHome,
+    stdoutPath: path.join(stateHome, "monitor.log"),
+  });
+
+  if (existsSync(plistPath)) {
+    run("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], true);
+  }
+  writeFileSync(plistPath, plist, { mode: 0o600 });
+  run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
+
+  return {
+    enabled: true,
+    label: MONITOR_LABEL,
+    path: plistPath,
+    previous,
+    intervalSeconds: 60,
+  };
 }
 
 export function configureCodex(configPath, stateHome) {
@@ -212,6 +284,21 @@ function restoreCodex(record) {
   writeFileSync(record.path, updated.endsWith("\n") ? updated : `${updated}\n`);
 }
 
+function restoreBackgroundMonitor(record, options = {}) {
+  if (!record?.enabled || !record.path) return;
+  const platform = options.platform || process.platform;
+  if (platform !== "darwin") return;
+  const run = options.commandRunner || runCommand;
+  const uid = options.uid ?? process.getuid?.();
+  run("/bin/launchctl", ["bootout", `gui/${uid}`, record.path], true);
+  if (record.previous == null) {
+    if (existsSync(record.path)) unlinkSync(record.path);
+    return;
+  }
+  writeFileSync(record.path, record.previous, { mode: 0o600 });
+  run("/bin/launchctl", ["bootstrap", `gui/${uid}`, record.path], true);
+}
+
 function installPlugins(packageRoot, run) {
   const results = [];
   results.push(run("claude", ["plugin", "marketplace", "add", packageRoot]));
@@ -277,6 +364,54 @@ function runtimeCommand(runtime, args = []) {
   return [runtime.command, ...runtime.argsPrefix, ...args]
     .map((value) => JSON.stringify(value))
     .join(" ");
+}
+
+function monitorPlist({ runtime, stateHome, stdoutPath }) {
+  const args = [
+    runtime.command,
+    ...runtime.argsPrefix,
+    "monitor",
+    "--once",
+    "--provider",
+    "claude",
+  ];
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${MONITOR_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${args.map((value) => `    <string>${escapeXml(value)}</string>`).join("\n")}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>USAGE_GUARD_HOME</key>
+    <string>${escapeXml(stateHome)}</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>${escapeXml(stdoutPath)}</string>
+  <key>StandardErrorPath</key>
+  <string>${escapeXml(stdoutPath)}</string>
+</dict>
+</plist>
+`;
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
 }
 
 function escapeRegex(value) {

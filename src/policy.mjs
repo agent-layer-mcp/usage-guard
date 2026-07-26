@@ -146,14 +146,25 @@ export function evaluateWindow(observation, history, config, now = Date.now()) {
       ? Number.POSITIVE_INFINITY
       : burnPercentPerMinute / sustainableBurn
     : null;
+  const minutesUntilReserve = burnPercentPerMinute && burnPercentPerMinute > 0
+    ? usablePercent / burnPercentPerMinute
+    : null;
   const projectedExhaustionAt = burnPercentPerMinute && burnPercentPerMinute > 0
     ? now + (remainingPercent / burnPercentPerMinute) * 60_000
     : null;
 
   let state = "safe";
   if (remainingPercent <= reservePercent) state = "queue";
-  else if (remainingPercent <= reservePercent + 10 || (paceRatio != null && paceRatio >= 1.3)) state = "protect";
-  else if (remainingPercent <= reservePercent + 25 || (paceRatio != null && paceRatio >= 0.95)) state = "watch";
+  else if (
+    remainingPercent <= reservePercent + 10
+    || (paceRatio != null && paceRatio >= 1.3)
+    || (minutesUntilReserve != null && minutesUntilReserve <= config.rapidBurnProtectMinutes)
+  ) state = "protect";
+  else if (
+    remainingPercent <= reservePercent + 25
+    || (paceRatio != null && paceRatio >= 0.95)
+    || (minutesUntilReserve != null && minutesUntilReserve <= config.rapidBurnWatchMinutes)
+  ) state = "watch";
 
   return {
     ...observation,
@@ -165,6 +176,7 @@ export function evaluateWindow(observation, history, config, now = Date.now()) {
     burnPercentPerMinute,
     sustainableBurnPercentPerMinute: sustainableBurn,
     paceRatio: Number.isFinite(paceRatio) ? paceRatio : paceRatio === Number.POSITIVE_INFINITY ? 999 : null,
+    minutesUntilReserve,
     projectedExhaustionAt,
   };
 }
@@ -237,13 +249,21 @@ function actionFor(state, taskClass) {
 function reasonFor(window, state, blocked) {
   if (!window) return "No controlling quota window was found.";
   const pace = window.paceRatio != null ? ` Current burn is ${window.paceRatio.toFixed(1)}x sustainable.` : "";
+  const rapidBurn = window.paceRatio == null && window.minutesUntilReserve != null
+    ? ` At the current burn, the protected reserve is about ${formatMinutes(window.minutesUntilReserve)} away.`
+    : "";
   const reset = window.resetsAt ? ` ${formatReset(window.resetsAt)}.` : "";
   if (state === "queue") {
     return `${window.label} has ${window.remainingPercent.toFixed(1)}% left, at the protected ${window.reservePercent}% reserve.${reset}${blocked ? " New heavy work is paused." : ""}`;
   }
-  if (state === "protect") return `${window.label} is under pressure.${pace}${reset}`;
-  if (state === "watch") return `${window.label} is approaching its sustainable pace.${pace}${reset}`;
+  if (state === "protect") return `${window.label} is under pressure.${pace}${rapidBurn}${reset}`;
+  if (state === "watch") return `${window.label} is approaching its sustainable pace.${pace}${rapidBurn}${reset}`;
   return `${window.label} is inside its sustainable budget.${reset}`;
+}
+
+function formatMinutes(value) {
+  const minutes = Math.max(1, Math.round(value));
+  return minutes < 60 ? `${minutes} minutes` : `${Math.round(minutes / 60)} hours`;
 }
 
 function instructionsFor(state, taskClass, config, window) {

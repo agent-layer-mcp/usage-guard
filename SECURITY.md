@@ -40,4 +40,11 @@ then execute the recorded Node binary. This avoids relying on a Terminal
 `PATH`, which desktop GUI processes may not inherit. The JavaScript routers
 then read the full install record for the Usage Guard CLI and provider paths.
 
+On macOS, the installer also creates the user LaunchAgent
+`sh.agentlayer.usage-guard.monitor`. It runs the recorded local Node and Usage
+Guard CLI once per minute, reads only the same allowlisted aggregate Claude
+cache, writes to the user-only Usage Guard state directory, and may display a
+local notification. It does not run as root and is removed by
+`usage-guard uninstall`.
+
 The dashboard binds to `127.0.0.1`, sends a restrictive content security policy, and exposes no credential-bearing endpoint. Do not proxy it to a public interface.

@@ -7,6 +7,7 @@ import path from "node:path";
 import { parse } from "smol-toml";
 import {
   configureBackgroundMonitor,
+  configureNativeNotifier,
   inspectConfiguredIntegrations,
   installIntegrations,
   uninstallIntegrations,
@@ -61,7 +62,7 @@ test("install and uninstall restore prior status-line settings", () => {
   assert.ok(installedCodex.tui.status_line.includes("five-hour-limit"));
   assert.deepEqual(
     inspectConfiguredIntegrations({ homeDir: home, recordPath, platform: "linux" }).map((check) => check.ok),
-    [true, true, true, true, true, true],
+    [true, true, true, true, true, true, true],
   );
   assert.equal(
     readFileSync(path.join(stateHome, "node-runtime"), "utf8").trim(),
@@ -164,4 +165,34 @@ test("macOS monitor installs a one-minute LaunchAgent with the absolute runtime"
   assert.match(plist, /<string>monitor<\/string>/);
   assert.match(plist, /<string>--once<\/string>/);
   assert.ok(calls.some((call) => call[1] === "bootstrap"));
+});
+
+test("macOS native notifier is built into the private state directory", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-notifier-"));
+  const packageRoot = path.join(root, "package");
+  const stateHome = path.join(root, "state");
+  mkdirSync(path.join(packageRoot, "native"), { recursive: true });
+  mkdirSync(path.join(packageRoot, "scripts"), { recursive: true });
+  writeFileSync(path.join(packageRoot, "native", "UsageGuardNotifier.swift"), "// source");
+  writeFileSync(path.join(packageRoot, "native", "Info.plist"), "<plist/>");
+  writeFileSync(path.join(packageRoot, "scripts", "build-macos-notifier.sh"), "#!/bin/sh");
+  const calls = [];
+
+  const notifier = configureNativeNotifier({
+    packageRoot,
+    stateHome,
+    platform: "darwin",
+    commandRunner(command, args) {
+      calls.push([command, ...args]);
+      return { ok: true };
+    },
+  });
+
+  assert.equal(notifier.enabled, true);
+  assert.equal(notifier.appPath, path.join(stateHome, "Usage Guard.app"));
+  assert.deepEqual(calls[0], [
+    "/bin/sh",
+    path.join(packageRoot, "scripts", "build-macos-notifier.sh"),
+    path.join(stateHome, "Usage Guard.app"),
+  ]);
 });

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -42,6 +43,12 @@ export function installIntegrations(options = {}) {
     ),
     codex: configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
   };
+  record.notifier = configureNativeNotifier({
+    packageRoot,
+    stateHome,
+    platform: options.platform,
+    commandRunner: options.commandRunner || runCommand,
+  });
   record.monitor = configureBackgroundMonitor({
     home,
     stateHome,
@@ -70,6 +77,7 @@ export function uninstallIntegrations(options = {}) {
     uid: options.uid,
     commandRunner: options.commandRunner || runCommand,
   });
+  restoreNativeNotifier(record.notifier);
   if (options.removePlugins !== false) removePlugins(options.commandRunner || runCommand);
   return record;
 }
@@ -133,6 +141,9 @@ export function inspectConfiguredIntegrations(options = {}) {
     || path.join(home, "Library", "LaunchAgents", `${MONITOR_LABEL}.plist`);
   const monitorReady = platform !== "darwin"
     || Boolean(record.monitor?.enabled && existsSync(monitorPath));
+  const notifierPath = record.notifier?.executable
+    || path.join(stateHomeForRecord(recordPath, options.env), "Usage Guard.app", "Contents", "MacOS", "UsageGuardNotifier");
+  const notifierReady = platform !== "darwin" || existsSync(notifierPath);
 
   return [
     {
@@ -167,6 +178,15 @@ export function inspectConfiguredIntegrations(options = {}) {
       detail: codexItems.length ? codexItems.join(", ") : "not configured",
     },
     {
+      label: "Desktop notifications",
+      ok: notifierReady,
+      detail: platform !== "darwin"
+        ? "not applicable on this platform"
+        : notifierReady
+          ? "native Usage Guard alerts enabled"
+          : "rerun `usage-guard install` to enable reliable macOS alerts",
+    },
+    {
       label: "Desktop monitor",
       ok: monitorReady,
       detail: platform !== "darwin"
@@ -176,6 +196,37 @@ export function inspectConfiguredIntegrations(options = {}) {
           : "rerun `usage-guard install` to enable macOS alerts",
     },
   ];
+}
+
+export function configureNativeNotifier(options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== "darwin" || !options.packageRoot) {
+    return { enabled: false, platform };
+  }
+
+  const script = path.join(options.packageRoot, "scripts", "build-macos-notifier.sh");
+  const source = path.join(options.packageRoot, "native", "UsageGuardNotifier.swift");
+  const plist = path.join(options.packageRoot, "native", "Info.plist");
+  if (![script, source, plist].every(existsSync)) {
+    return { enabled: false, platform, reason: "native notifier sources unavailable" };
+  }
+
+  const stateHome = options.stateHome || guardHome();
+  const appPath = path.join(stateHome, "Usage Guard.app");
+  const executable = path.join(appPath, "Contents", "MacOS", "UsageGuardNotifier");
+  mkdirSync(stateHome, { recursive: true, mode: 0o700 });
+  try {
+    (options.commandRunner || runCommand)("/bin/sh", [script, appPath]);
+    return { enabled: true, platform, appPath, executable };
+  } catch (error) {
+    return {
+      enabled: false,
+      platform,
+      appPath,
+      executable,
+      reason: error.message,
+    };
+  }
 }
 
 export function configureBackgroundMonitor(options = {}) {
@@ -299,6 +350,11 @@ function restoreBackgroundMonitor(record, options = {}) {
   run("/bin/launchctl", ["bootstrap", `gui/${uid}`, record.path], true);
 }
 
+function restoreNativeNotifier(record) {
+  if (!record?.appPath) return;
+  rmSync(record.appPath, { recursive: true, force: true });
+}
+
 function installPlugins(packageRoot, run) {
   const results = [];
   results.push(run("claude", ["plugin", "marketplace", "add", packageRoot]));
@@ -358,6 +414,10 @@ function normalizeProviderPaths(providerPaths) {
     claude: typeof providerPaths?.claude === "string" ? providerPaths.claude : null,
     codex: typeof providerPaths?.codex === "string" ? providerPaths.codex : null,
   };
+}
+
+function stateHomeForRecord(recordPath, env) {
+  return env?.USAGE_GUARD_HOME || path.dirname(recordPath);
 }
 
 function runtimeCommand(runtime, args = []) {

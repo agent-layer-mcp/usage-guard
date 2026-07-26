@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import path from "node:path";
+import { guardHome } from "./config.mjs";
 import { formatStatusLine } from "./presentation.mjs";
 import { providerDecision, syncClaudeDesktop, syncCodex } from "./service.mjs";
 
@@ -54,6 +56,24 @@ export async function runMonitorCycle(store, options = {}) {
 export function notifyMacOS(notification, options = {}) {
   if ((options.platform || process.platform) !== "darwin") return false;
   const run = options.commandRunner || execFileSync;
+  const nativeNotifier = Object.hasOwn(options, "nativeNotifierPath")
+    ? options.nativeNotifierPath
+    : findNativeNotifier(options);
+  if (nativeNotifier) {
+    const args = [
+      "--title", notification.title,
+      "--subtitle", notification.subtitle,
+      "--message", notification.message,
+      "--identifier", `sh.agentlayer.usage-guard.${notification.state}`,
+    ];
+    if (["protect", "queue"].includes(notification.state)) args.push("--sound");
+    run(nativeNotifier, args, {
+      encoding: "utf8",
+      stdio: "ignore",
+    });
+    return true;
+  }
+
   const terminalNotifier = Object.hasOwn(options, "terminalNotifierPath")
     ? options.terminalNotifierPath
     : findTerminalNotifier();
@@ -85,6 +105,19 @@ export function notifyMacOS(notification, options = {}) {
     stdio: "ignore",
   });
   return true;
+}
+
+export function findNativeNotifier(options = {}) {
+  const exists = options.exists || existsSync;
+  const stateHome = options.stateHome || guardHome(options.env);
+  const executable = path.join(
+    stateHome,
+    "Usage Guard.app",
+    "Contents",
+    "MacOS",
+    "UsageGuardNotifier",
+  );
+  return exists(executable) ? executable : null;
 }
 
 export function findTerminalNotifier(options = {}) {

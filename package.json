@@ -9,6 +9,8 @@
   "files": [
     "bin/",
     "src/",
+    "native/",
+    "scripts/build-macos-notifier.sh",
     "plugins/",
     ".agents/",
     ".claude-plugin/",

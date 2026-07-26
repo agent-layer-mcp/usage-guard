@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  findNativeNotifier,
   findTerminalNotifier,
   runMonitorCycle,
   notifyMacOS,
@@ -61,6 +62,7 @@ test("macOS notifier emits a visible AppleScript notification", () => {
     state: "protect",
   }, {
     platform: "darwin",
+    nativeNotifierPath: null,
     terminalNotifierPath: null,
     commandRunner(command, args) {
       calls.push([command, ...args]);
@@ -73,7 +75,7 @@ test("macOS notifier emits a visible AppleScript notification", () => {
   assert.match(calls[0][2], /sound name "Glass"/);
 });
 
-test("macOS notifier prefers terminal-notifier when installed", () => {
+test("macOS notifier prefers the native Usage Guard helper", () => {
   const calls = [];
   const shown = notifyMacOS({
     title: "Usage Guard",
@@ -82,20 +84,47 @@ test("macOS notifier prefers terminal-notifier when installed", () => {
     state: "watch",
   }, {
     platform: "darwin",
-    terminalNotifierPath: "/opt/homebrew/bin/terminal-notifier",
+    nativeNotifierPath: "/tmp/Usage Guard.app/Contents/MacOS/UsageGuardNotifier",
     commandRunner(command, args) {
       calls.push([command, ...args]);
     },
   });
 
   assert.equal(shown, true);
-  assert.equal(calls[0][0], "/opt/homebrew/bin/terminal-notifier");
+  assert.equal(calls[0][0], "/tmp/Usage Guard.app/Contents/MacOS/UsageGuardNotifier");
   assert.deepEqual(calls[0].slice(1), [
-    "-title", "Usage Guard",
-    "-subtitle", "Claude: WATCH",
-    "-message", "Quota pressure",
-    "-group", "sh.agentlayer.usage-guard",
+    "--title", "Usage Guard",
+    "--subtitle", "Claude: WATCH",
+    "--message", "Quota pressure",
+    "--identifier", "sh.agentlayer.usage-guard.watch",
   ]);
+});
+
+test("macOS notifier falls back to terminal-notifier", () => {
+  const calls = [];
+  notifyMacOS({
+    title: "Usage Guard",
+    subtitle: "Claude: WATCH",
+    message: "Quota pressure",
+    state: "watch",
+  }, {
+    platform: "darwin",
+    nativeNotifierPath: null,
+    terminalNotifierPath: "/opt/homebrew/bin/terminal-notifier",
+    commandRunner(command, args) {
+      calls.push([command, ...args]);
+    },
+  });
+  assert.equal(calls[0][0], "/opt/homebrew/bin/terminal-notifier");
+});
+
+test("native notifier discovery uses the Usage Guard state directory", () => {
+  const expected = "/tmp/usage-guard/Usage Guard.app/Contents/MacOS/UsageGuardNotifier";
+  assert.equal(findNativeNotifier({
+    stateHome: "/tmp/usage-guard",
+    exists: (candidate) => candidate === expected,
+  }), expected);
+  assert.equal(findNativeNotifier({ stateHome: "/tmp/missing", exists: () => false }), null);
 });
 
 test("terminal-notifier discovery checks Apple Silicon and Intel Homebrew paths", () => {

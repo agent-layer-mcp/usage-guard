@@ -23,11 +23,11 @@ test("Claude prompt hook visibly blocks at reserve", async () => {
   assert.match(output.reason, /protected/i);
   assert.equal(output.continue, false);
   assert.match(output.stopReason, /protected/i);
-  assert.match(output.hookSpecificOutput.additionalContext, /never does so silently/i);
+  assert.match(output.hookSpecificOutput.additionalContext, /never lower the active model/i);
   store.close();
 });
 
-test("safe hook adds bounded context without blocking", async () => {
+test("safe prompt hook stays silent", async () => {
   const now = Date.now();
   const store = new GuardStore({ filename: ":memory:" });
   store.saveSnapshot({
@@ -43,7 +43,28 @@ test("safe hook adds bounded context without blocking", async () => {
   assert.equal(output.continue, undefined);
   assert.equal(output.decision, undefined);
   assert.equal(output.systemMessage, undefined);
-  assert.match(output.hookSpecificOutput.additionalContext, /Quality lock is on/i);
+  assert.deepEqual(output, {});
+  store.close();
+});
+
+test("session start adds one stable quality contract without volatile meter data", async () => {
+  const now = Date.now();
+  const store = new GuardStore({ filename: ":memory:" });
+  store.saveSnapshot({
+    provider: "claude",
+    source: "test",
+    observedAt: now,
+    windows: [{ key: "five-hour", label: "5 hour", usedPercent: 12, windowMinutes: 300, resetsAt: now + 240 * 60_000 }],
+  });
+  const output = await runProviderHook(store, "claude", {
+    hook_event_name: "SessionStart",
+    session_id: "stable-session",
+  }, { claudeDesktop: { platform: "linux" } });
+
+  const context = output.hookSpecificOutput.additionalContext;
+  assert.match(context, /Quality lock is on/i);
+  assert.match(context, /usage_guard_status/i);
+  assert.doesNotMatch(context, /\d+%|resets in|Reason:/i);
   store.close();
 });
 
@@ -123,7 +144,7 @@ test("safe Claude pre-tool hook stays silent", async () => {
   store.close();
 });
 
-test("Claude pre-tool hook shows one chat cue per watch or protect transition", async () => {
+test("Claude hooks show one chat cue per watch or protect transition per session", async () => {
   const now = Date.now();
   const store = new GuardStore({ filename: ":memory:" });
   const save = (usedPercent, observedAt) => store.saveSnapshot({
@@ -157,10 +178,18 @@ test("Claude pre-tool hook shows one chat cue per watch or protect transition", 
   assert.deepEqual(repeatedWatch, {});
 
   save(85, now + 1);
-  const protect = await runProviderHook(store, "claude", input, {
+  const protect = await runProviderHook(store, "claude", {
+    ...input,
+    hook_event_name: "UserPromptSubmit",
+  }, {
     claudeDesktop: { platform: "linux" },
   });
   assert.match(protect.systemMessage, /PROTECT/);
+
+  const repeatedProtectFromTool = await runProviderHook(store, "claude", input, {
+    claudeDesktop: { platform: "linux" },
+  });
+  assert.deepEqual(repeatedProtectFromTool, {});
 
   const otherSession = await runProviderHook(store, "claude", {
     ...input,
@@ -186,8 +215,6 @@ test("a stale Claude Desktop cache never blocks a prompt", async () => {
     prompt: "Implement the migration",
   }, { claudeDesktop: { cachePath } });
 
-  assert.equal(output.decision, undefined);
-  assert.equal(output.continue, undefined);
-  assert.match(output.hookSpecificOutput.additionalContext, /stale/i);
+  assert.deepEqual(output, {});
   store.close();
 });

@@ -1,13 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse } from "smol-toml";
 import {
   configureBackgroundMonitor,
   configureNativeNotifier,
+  configureScreenshotMemoryProxy,
   inspectConfiguredIntegrations,
   installIntegrations,
   uninstallIntegrations,
@@ -62,7 +69,7 @@ test("install and uninstall restore prior status-line settings", () => {
   assert.ok(installedCodex.tui.status_line.includes("five-hour-limit"));
   assert.deepEqual(
     inspectConfiguredIntegrations({ homeDir: home, recordPath, platform: "linux" }).map((check) => check.ok),
-    [true, true, true, true, true, true, true],
+    [true, true, true, true, true, true, true, true],
   );
   assert.equal(
     readFileSync(path.join(stateHome, "node-runtime"), "utf8").trim(),
@@ -168,6 +175,98 @@ test("macOS monitor installs a one-minute LaunchAgent with the absolute runtime"
   assert.match(plist, /<string>monitor<\/string>/);
   assert.match(plist, /<string>--once<\/string>/);
   assert.ok(calls.some((call) => call[1] === "bootstrap"));
+});
+
+test("macOS Screenshot Memory chains to the prior Claude upstream and restores it", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-screenshot-memory-"));
+  const home = path.join(root, "home");
+  const stateHome = path.join(root, "state");
+  const recordPath = path.join(stateHome, "install-record.json");
+  const settingsPath = path.join(home, ".claude", "settings.json");
+  const previousUpstream = "http://127.0.0.1:47821";
+  const calls = [];
+  mkdirSync(path.dirname(settingsPath), { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify({
+    env: {
+      ANTHROPIC_BASE_URL: previousUpstream,
+      KEEP_ME: "yes",
+    },
+  }));
+
+  const record = installIntegrations({
+    homeDir: home,
+    stateHome,
+    recordPath,
+    packageRoot: root,
+    installPlugins: false,
+    installMonitor: false,
+    platform: "darwin",
+    uid: 501,
+    runtime: {
+      command: process.execPath,
+      argsPrefix: [path.join(root, "usage-guard.mjs")],
+    },
+    providerPaths: {
+      claude: process.execPath,
+      codex: process.execPath,
+    },
+    commandRunner(command, args) {
+      calls.push([command, ...args]);
+      return { ok: true };
+    },
+  });
+
+  const installedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const plist = readFileSync(record.screenshotMemory.path, "utf8");
+  assert.equal(record.screenshotMemory.upstream, previousUpstream);
+  assert.equal(installedSettings.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:47822");
+  assert.equal(installedSettings.env.KEEP_ME, "yes");
+  assert.match(plist, /sh\.agentlayer\.usage-guard\.screenshot-memory/);
+  assert.match(plist, /<string>http:\/\/127\.0\.0\.1:47821<\/string>/);
+  assert.match(plist, /<string>5<\/string>/);
+  assert.ok(calls.some((call) => call[1] === "bootstrap" && call.at(-1) === record.screenshotMemory.path));
+
+  uninstallIntegrations({
+    recordPath,
+    removePlugins: false,
+    platform: "darwin",
+    uid: 501,
+    commandRunner(command, args) {
+      calls.push([command, ...args]);
+      return { ok: true };
+    },
+  });
+
+  const restoredSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  assert.equal(restoredSettings.env.ANTHROPIC_BASE_URL, previousUpstream);
+  assert.equal(restoredSettings.env.KEEP_ME, "yes");
+  assert.equal(existsSync(record.screenshotMemory.path), false);
+});
+
+test("Screenshot Memory LaunchAgent rejects a self-referencing upstream", () => {
+  assert.throws(
+    () => configureScreenshotMemoryProxy({
+      home: "/tmp",
+      stateHome: "/tmp",
+      runtime: { command: process.execPath, argsPrefix: [] },
+      upstream: "http://127.0.0.1:47822",
+      platform: "darwin",
+    }),
+    /cannot point back to itself/,
+  );
+});
+
+test("Screenshot Memory LaunchAgent rejects credential-bearing upstream URLs", () => {
+  assert.throws(
+    () => configureScreenshotMemoryProxy({
+      home: "/tmp",
+      stateHome: "/tmp",
+      runtime: { command: process.execPath, argsPrefix: [] },
+      upstream: "https://token@example.com/v1",
+      platform: "darwin",
+    }),
+    /must not contain credentials/,
+  );
 });
 
 test("macOS native notifier is built into the private state directory", () => {

@@ -20,10 +20,15 @@ const CODEX_STATUS_ITEMS = [
   "weekly-limit",
 ];
 const MONITOR_LABEL = "sh.agentlayer.usage-guard.monitor";
+const SCREENSHOT_MEMORY_LABEL = "sh.agentlayer.usage-guard.screenshot-memory";
+const SCREENSHOT_MEMORY_PORT = 47_822;
+const SCREENSHOT_MEMORY_URL = `http://127.0.0.1:${SCREENSHOT_MEMORY_PORT}`;
+const ANTHROPIC_API_URL = "https://api.anthropic.com";
 
 export function installIntegrations(options = {}) {
   const home = options.homeDir || os.homedir();
   const stateHome = options.stateHome || guardHome(options.env);
+  const recordPath = options.recordPath || installRecordPath(options.env);
   const packageRoot = options.packageRoot;
   const runtime = normalizeRuntime(options.runtime);
   mkdirSync(stateHome, { recursive: true, mode: 0o700 });
@@ -31,18 +36,45 @@ export function installIntegrations(options = {}) {
   if (runtime?.command) {
     writeFileSync(bootstrapRuntimePath, `${runtime.command}\n`, { mode: 0o600 });
   }
+  const claudeSettingsPath = path.join(home, ".claude", "settings.json");
+  const existingRecord = existsSync(recordPath)
+    ? readJsonFile(recordPath, {})
+    : {};
+  const configuredClaudeBaseUrl = readClaudeBaseUrl(claudeSettingsPath);
+  const screenshotMemoryUpstream = configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
+    ? existingRecord.screenshotMemory?.upstream || ANTHROPIC_API_URL
+    : configuredClaudeBaseUrl || ANTHROPIC_API_URL;
   const record = {
     installedAt: Date.now(),
     runtime,
     bootstrapRuntimePath,
     providers: normalizeProviderPaths(options.providerPaths),
-    claude: configureClaude(
-      path.join(home, ".claude", "settings.json"),
-      stateHome,
-      runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
-    ),
     codex: configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
   };
+  record.screenshotMemory = configureScreenshotMemoryProxy({
+    home,
+    stateHome,
+    runtime,
+    upstream: options.screenshotMemoryUpstream || screenshotMemoryUpstream,
+    retentionTurns: options.screenshotMemoryTurns || 5,
+    enabled: options.installScreenshotMemory !== false,
+    platform: options.platform,
+    uid: options.uid,
+    commandRunner: options.commandRunner || runCommand,
+  });
+  record.claude = configureClaude(
+    claudeSettingsPath,
+    stateHome,
+    runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
+    record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
+  );
+  if (
+    configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
+    && existingRecord.claude
+    && Object.hasOwn(existingRecord.claude, "previousBaseUrl")
+  ) {
+    record.claude.previousBaseUrl = existingRecord.claude.previousBaseUrl;
+  }
   record.notifier = configureNativeNotifier({
     packageRoot,
     stateHome,
@@ -62,7 +94,7 @@ export function installIntegrations(options = {}) {
   if (options.installPlugins !== false && packageRoot) {
     record.plugins = installPlugins(packageRoot, options.commandRunner || runCommand);
   }
-  writeFileSync(options.recordPath || installRecordPath(options.env), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   return record;
 }
 
@@ -77,6 +109,11 @@ export function uninstallIntegrations(options = {}) {
     uid: options.uid,
     commandRunner: options.commandRunner || runCommand,
   });
+  restoreScreenshotMemoryProxy(record.screenshotMemory, {
+    platform: options.platform,
+    uid: options.uid,
+    commandRunner: options.commandRunner || runCommand,
+  });
   restoreNativeNotifier(record.notifier);
   if (options.removePlugins !== false) removePlugins(options.commandRunner || runCommand);
   return record;
@@ -86,18 +123,82 @@ export function configureClaude(
   settingsPath,
   stateHome,
   command = "usage-guard statusline claude",
+  screenshotMemoryUrl = null,
 ) {
   mkdirSync(path.dirname(settingsPath), { recursive: true });
   backupFile(settingsPath, stateHome, "claude-settings.json");
   const settings = readJsonFile(settingsPath, {});
   const previous = Object.hasOwn(settings, "statusLine") ? settings.statusLine : null;
+  const previousBaseUrl = Object.hasOwn(settings.env || {}, "ANTHROPIC_BASE_URL")
+    ? settings.env.ANTHROPIC_BASE_URL
+    : null;
   settings.statusLine = {
     type: "command",
     command,
     padding: 0,
   };
+  if (screenshotMemoryUrl) {
+    settings.env = { ...(settings.env || {}), ANTHROPIC_BASE_URL: screenshotMemoryUrl };
+  }
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-  return { path: settingsPath, previous };
+  return { path: settingsPath, previous, previousBaseUrl };
+}
+
+export function configureScreenshotMemoryProxy(options = {}) {
+  const platform = options.platform || process.platform;
+  if (
+    platform !== "darwin"
+    || options.enabled === false
+    || !options.runtime
+  ) {
+    return {
+      enabled: false,
+      platform,
+      upstream: options.upstream || ANTHROPIC_API_URL,
+    };
+  }
+
+  const home = options.home || os.homedir();
+  const stateHome = options.stateHome || guardHome();
+  const plistPath = path.join(
+    home,
+    "Library",
+    "LaunchAgents",
+    `${SCREENSHOT_MEMORY_LABEL}.plist`,
+  );
+  const run = options.commandRunner || runCommand;
+  const uid = options.uid ?? process.getuid?.();
+  const upstream = normalizeProxyUpstream(options.upstream);
+  const retentionTurns = normalizeRetentionTurns(options.retentionTurns);
+  mkdirSync(path.dirname(plistPath), { recursive: true });
+  mkdirSync(stateHome, { recursive: true, mode: 0o700 });
+  const existing = existsSync(plistPath) ? readFileSync(plistPath, "utf8") : null;
+  const previous = existing?.includes(`<string>${SCREENSHOT_MEMORY_LABEL}</string>`)
+    ? null
+    : existing;
+  const plist = screenshotMemoryPlist({
+    runtime: options.runtime,
+    stateHome,
+    upstream,
+    retentionTurns,
+    stdoutPath: path.join(stateHome, "screenshot-memory.log"),
+  });
+
+  if (existsSync(plistPath)) {
+    run("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], true);
+  }
+  writeFileSync(plistPath, plist, { mode: 0o600 });
+  run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
+  return {
+    enabled: true,
+    platform,
+    label: SCREENSHOT_MEMORY_LABEL,
+    path: plistPath,
+    previous,
+    url: SCREENSHOT_MEMORY_URL,
+    upstream,
+    retentionTurns,
+  };
 }
 
 export function inspectConfiguredIntegrations(options = {}) {
@@ -144,6 +245,19 @@ export function inspectConfiguredIntegrations(options = {}) {
   const notifierPath = record.notifier?.executable
     || path.join(stateHomeForRecord(recordPath, options.env), "Usage Guard.app", "Contents", "MacOS", "UsageGuardNotifier");
   const notifierReady = platform !== "darwin" || existsSync(notifierPath);
+  const screenshotMemoryPath = record.screenshotMemory?.path
+    || path.join(
+      home,
+      "Library",
+      "LaunchAgents",
+      `${SCREENSHOT_MEMORY_LABEL}.plist`,
+    );
+  const screenshotMemoryReady = platform !== "darwin"
+    || Boolean(
+      record.screenshotMemory?.enabled
+      && existsSync(screenshotMemoryPath)
+      && settings.env?.ANTHROPIC_BASE_URL === SCREENSHOT_MEMORY_URL,
+    );
 
   return [
     {
@@ -194,6 +308,15 @@ export function inspectConfiguredIntegrations(options = {}) {
         : monitorReady
           ? "checks aggregate Claude usage every minute"
           : "rerun `usage-guard install` to enable macOS alerts",
+    },
+    {
+      label: "Screenshot Memory",
+      ok: screenshotMemoryReady,
+      detail: platform !== "darwin"
+        ? "manual proxy mode available on this platform"
+        : screenshotMemoryReady
+          ? `${record.screenshotMemory.retentionTurns} user-turn visual tail; local gateway active`
+          : "rerun `usage-guard install` to enable the local image-expiry gateway",
     },
   ];
 }
@@ -322,6 +445,17 @@ function restoreClaude(record) {
   const settings = readJsonFile(record.path, {});
   if (record.previous == null) delete settings.statusLine;
   else settings.statusLine = record.previous;
+  if (record.previousBaseUrl == null) {
+    if (settings.env) {
+      delete settings.env.ANTHROPIC_BASE_URL;
+      if (!Object.keys(settings.env).length) delete settings.env;
+    }
+  } else {
+    settings.env = {
+      ...(settings.env || {}),
+      ANTHROPIC_BASE_URL: record.previousBaseUrl,
+    };
+  }
   writeFileSync(record.path, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
@@ -336,6 +470,21 @@ function restoreCodex(record) {
 }
 
 function restoreBackgroundMonitor(record, options = {}) {
+  if (!record?.enabled || !record.path) return;
+  const platform = options.platform || process.platform;
+  if (platform !== "darwin") return;
+  const run = options.commandRunner || runCommand;
+  const uid = options.uid ?? process.getuid?.();
+  run("/bin/launchctl", ["bootout", `gui/${uid}`, record.path], true);
+  if (record.previous == null) {
+    if (existsSync(record.path)) unlinkSync(record.path);
+    return;
+  }
+  writeFileSync(record.path, record.previous, { mode: 0o600 });
+  run("/bin/launchctl", ["bootstrap", `gui/${uid}`, record.path], true);
+}
+
+function restoreScreenshotMemoryProxy(record, options = {}) {
   if (!record?.enabled || !record.path) return;
   const platform = options.platform || process.platform;
   if (platform !== "darwin") return;
@@ -397,6 +546,11 @@ function backupFile(source, stateHome, filename) {
 function readJsonFile(filename, fallback) {
   if (!existsSync(filename)) return fallback;
   return JSON.parse(readFileSync(filename, "utf8"));
+}
+
+function readClaudeBaseUrl(settingsPath) {
+  const value = readJsonFile(settingsPath, {}).env?.ANTHROPIC_BASE_URL;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function normalizeRuntime(runtime) {
@@ -463,6 +617,76 @@ ${args.map((value) => `    <string>${escapeXml(value)}</string>`).join("\n")}
 </dict>
 </plist>
 `;
+}
+
+function screenshotMemoryPlist({
+  runtime,
+  stateHome,
+  upstream,
+  retentionTurns,
+  stdoutPath,
+}) {
+  const args = [
+    runtime.command,
+    ...runtime.argsPrefix,
+    "screenshot-memory",
+    "proxy",
+    "--port",
+    String(SCREENSHOT_MEMORY_PORT),
+    "--upstream",
+    upstream,
+    "--turns",
+    String(retentionTurns),
+  ];
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${SCREENSHOT_MEMORY_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${args.map((value) => `    <string>${escapeXml(value)}</string>`).join("\n")}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>USAGE_GUARD_HOME</key>
+    <string>${escapeXml(stateHome)}</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>${escapeXml(stdoutPath)}</string>
+  <key>StandardErrorPath</key>
+  <string>${escapeXml(stdoutPath)}</string>
+</dict>
+</plist>
+`;
+}
+
+function normalizeProxyUpstream(value) {
+  const upstream = new URL(value || ANTHROPIC_API_URL);
+  if (!["http:", "https:"].includes(upstream.protocol)) {
+    throw new Error("Screenshot Memory upstream must use http or https.");
+  }
+  if (upstream.username || upstream.password || upstream.search || upstream.hash) {
+    throw new Error("Screenshot Memory upstream must not contain credentials, query parameters, or fragments.");
+  }
+  const normalized = upstream.toString().replace(/\/$/, "");
+  if (normalized === SCREENSHOT_MEMORY_URL) {
+    throw new Error("Screenshot Memory upstream cannot point back to itself.");
+  }
+  return normalized;
+}
+
+function normalizeRetentionTurns(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 1) return 5;
+  return Math.min(50, Math.round(number));
 }
 
 function escapeXml(value) {

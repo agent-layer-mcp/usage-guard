@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 - 2026-07-27
+
+- Add local Screenshot Memory for Claude: screenshots remain visually live for
+  five later user turns, then old base64 image blocks are replaced on future
+  requests with bounded contextual text.
+- Preserve the saved conversation and original attachments; transform only the
+  outbound request and allow individual screenshot turns to be pinned.
+- Chain the localhost gateway to the user's previous Claude upstream, including
+  pxpipe, and restore that exact setting on uninstall.
+- Store only numeric replacement counters and byte totals; never persist prompt
+  text, assistant text, screenshots, credentials, or request bodies.
+- Surface Screenshot Memory activity through CLI, MCP diagnostics, `doctor`,
+  and Claude's post-response footer.
+
 ## 0.2.6 - 2026-07-27
 
 - Add a compact post-response Claude usage footer through the supported `Stop`

@@ -15,6 +15,10 @@ import { runMcpServer } from "../src/mcp.mjs";
 import { runMonitorCycle } from "../src/monitor.mjs";
 import { formatStatusLine, formatStatusText } from "../src/presentation.mjs";
 import {
+  readScreenshotMemoryStatus,
+  startScreenshotMemoryProxy,
+} from "../src/screenshot-proxy.mjs";
+import {
   completeStatus,
   ingestClaudeStatus,
   providerDecision,
@@ -119,6 +123,37 @@ try {
       process.on("SIGINT", close);
       process.on("SIGTERM", close);
     }
+  } else if (command === "screenshot-memory") {
+    const subcommand = args[0] || "status";
+    if (subcommand === "status") {
+      const status = readScreenshotMemoryStatus();
+      console.log(status
+        ? JSON.stringify(status, null, 2)
+        : "Screenshot Memory has not replaced any images yet.");
+      store.close();
+    } else if (subcommand === "proxy") {
+      const port = numberOption(args, "--port");
+      const turns = numberOption(args, "--turns");
+      const upstream = stringOption(args, "--upstream")
+        || process.env.USAGE_GUARD_SCREENSHOT_MEMORY_UPSTREAM;
+      const proxy = await startScreenshotMemoryProxy({
+        port,
+        retentionTurns: turns,
+        upstream,
+      });
+      console.log(
+        `Usage Guard Screenshot Memory listening at ${proxy.url} `
+        + `(keeps ${proxy.retentionTurns} user turns; upstream ${proxy.upstream})`,
+      );
+      const close = () => proxy.server.close(() => {
+        store.close();
+        process.exit(0);
+      });
+      process.on("SIGINT", close);
+      process.on("SIGTERM", close);
+    } else {
+      throw new Error("Screenshot Memory command must be `status` or `proxy`.");
+    }
   } else if (command === "config") {
     if (!args.length) console.log(JSON.stringify(store.getConfig(), null, 2));
     else {
@@ -205,6 +240,19 @@ function parseConfigArgs(values) {
   return patch;
 }
 
+function stringOption(values, name) {
+  const index = values.indexOf(name);
+  return index >= 0 ? values[index + 1] : undefined;
+}
+
+function numberOption(values, name) {
+  const value = stringOption(values, name);
+  if (value == null) return undefined;
+  const number = Number(value);
+  if (!Number.isFinite(number)) throw new Error(`${name} must be a number.`);
+  return number;
+}
+
 function parseScalar(value) {
   if (value === "true") return true;
   if (value === "false") return false;
@@ -238,7 +286,10 @@ async function runDoctor() {
       : "no context observation yet",
   });
   for (const check of checks) console.log(`${check.ok ? "PASS" : "WAIT"}  ${check.label.padEnd(18)} ${check.detail}`);
-  console.log("\nUsage Guard reads provider quota signals only. It does not read auth files, cookies, prompts, transcripts, or source code.");
+  console.log(
+    "\nUsage Guard stores no prompts, screenshots, transcripts, credentials, or source code. "
+    + "Screenshot Memory transiently transforms eligible Claude requests on localhost.",
+  );
 }
 
 function claudeDesktopCacheCheck(snapshot) {
@@ -343,6 +394,8 @@ Commands:
   reset                         Clear local readings and decision history
   mcp                           Run the local MCP server over stdio
   monitor [--once]              Monitor aggregate usage and show macOS alerts
+  screenshot-memory status      Show local image-expiry savings
+  screenshot-memory proxy       Run the local five-turn image-memory gateway
 
 Integration commands used by the plugins:
   statusline claude

@@ -1,4 +1,5 @@
 import { formatStatusLine } from "./presentation.mjs";
+import { readScreenshotMemoryStatus } from "./screenshot-proxy.mjs";
 import { providerDecision, syncClaudeDesktop, syncCodex } from "./service.mjs";
 
 export async function runProviderHook(store, provider, input, options = {}) {
@@ -42,8 +43,14 @@ export async function runProviderHook(store, provider, input, options = {}) {
   }
 
   if (eventName === "Stop") {
+    const screenshotMemory = readScreenshotMemoryStatus();
+    const screenshotMessage = screenshotMemory
+      && screenshotMemory.updatedAt >= Date.now() - 10 * 60_000
+      && screenshotMemory.lastRequestImagesReplaced > 0
+      ? ` · Screenshot Memory summarized ${screenshotMemory.lastRequestImagesReplaced} old image(s)`
+      : "";
     return {
-      systemMessage: message,
+      systemMessage: `${message}${screenshotMessage}`,
       suppressOutput: true,
     };
   }

@@ -1,6 +1,6 @@
 # Architecture
 
-Usage Guard is one local Node.js process with four entry surfaces:
+Usage Guard is a local Node.js tool with these entry surfaces:
 
 1. The CLI renders status, configuration, installation, and the localhost dashboard.
 2. Claude's status-line command ingests provider-exposed quota windows and
@@ -15,6 +15,9 @@ Usage Guard is one local Node.js process with four entry surfaces:
 6. The MCP server exposes status and decisions to provider desktop sessions.
 7. A `/bin/sh` bootstrap reads the installer-recorded Node path before either
    plugin router starts, avoiding dependence on the desktop process `PATH`.
+8. A localhost Screenshot Memory gateway keeps recent Claude screenshots
+   visually live, then replaces old base64 image blocks on future requests with
+   bounded contextual text.
 
 ## Data flow
 
@@ -34,6 +37,28 @@ transient task class ---------------------------------------------+--> policy en
 ```
 
 The task classifier returns only `high-reasoning`, `standard`, `mechanical`, or `unknown`. The input text is discarded after the decision and never reaches SQLite.
+
+Claude's request path is independent of the quota policy path:
+
+```text
+Claude local session
+        |
+        v
+Screenshot Memory (127.0.0.1:47822)
+  - keeps last five user turns of images
+  - replaces older image blocks in memory
+  - persists numeric counters only
+        |
+        v
+previous ANTHROPIC_BASE_URL
+  - pxpipe on 127.0.0.1:47821 in the common diagnostic setup
+  - or Anthropic directly
+```
+
+The transform is stateless with respect to conversation text: every request
+already contains the relevant message history. It counts later user turns,
+preserves pinned screenshots, and builds memory from text already present in
+that request. It never edits the provider's saved conversation.
 
 ## Control boundary
 
@@ -58,11 +83,10 @@ hook path. Usage Guard relies on host auto-compaction in those surfaces and
 does not read transcript contents to estimate context.
 
 The Claude Desktop cache adapter does not need a reset timestamp to enforce the
-reserve or detect rapid burn. It infers a reset only from a same-organization
-percentage drop of at least five points between samples no more than 15 minutes
-apart. Without reset evidence, it projects minutes until reserve directly from
-recent burn and escalates at configurable 90-minute watch and 30-minute protect
-thresholds.
+reserve or detect rapid burn. It never infers a reset from aggregate percentage
+changes. Without authoritative reset evidence, it projects minutes until the
+reserve directly from recent burn and escalates at configurable 90-minute watch
+and 30-minute protect thresholds.
 
 ## Forecasting
 

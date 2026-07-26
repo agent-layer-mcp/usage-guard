@@ -17,6 +17,9 @@ reset time when the provider has not supplied one.
 - Tracks Claude context pressure per session when Claude supplies it.
 - Optionally surfaces current Claude request context, resident images, cache
   writes/reads, and directional weighted cost from a local pxpipe ledger.
+- Keeps screenshots visually available for five later user turns, then replaces
+  their repeated image payload with compact text memory on future Claude
+  requests.
 - Reduces avoidable context and speculative concurrency before changing task timing.
 - Keeps the active model and reasoning effort locked by default.
 - Blocks new quota-heavy turns at the reserve and explains when work can resume.
@@ -47,6 +50,9 @@ The installer:
    a local one-minute background monitor. It alerts when Claude usage escalates
    to `WATCH`, `PROTECT`, or `QUEUE`, with legacy notification paths retained
    only as fallbacks.
+7. On macOS, installs Screenshot Memory as a localhost-only Claude request
+   gateway. It preserves any existing `ANTHROPIC_BASE_URL` as its upstream, so a
+   local proxy such as pxpipe remains in the request path.
 
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 
@@ -124,12 +130,39 @@ Usage Guard still projects minutes until the configured reserve from multiple
 recent aggregate-burn horizons: `WATCH` within 90 minutes and `PROTECT` within
 30 minutes by default.
 
+### Screenshot Memory
+
+Vision payloads are unusually expensive when the same screenshot remains in a
+long conversation. Screenshot Memory keeps each screenshot intact for the next
+five user turns. On later outbound Claude requests, it replaces the base64 image
+block with bounded text containing:
+
+- the text from the user's original screenshot turn
+- the first assistant response immediately following that turn
+- the image type, approximate original size, and a short content hash
+- a clear warning that the replacement is contextual memory, not a pixel-exact
+  transcription
+
+This transformation happens only in the request sent to Claude. It does not
+edit the saved conversation or delete the original attachment. Reattach an
+image whenever its pixels are needed again. Add `[usage-guard:pin-images]` or
+`#keep-screenshot` to the screenshot turn to keep its image payload live.
+
+The gateway binds to `127.0.0.1:47822`. It does not call another model to create
+the memory, and it stores only numeric replacement counts and byte totals. On
+install it chains to the user's prior Claude upstream and restores that exact
+setting on uninstall.
+
+Screenshot Memory currently applies to local Claude requests. Codex does not
+offer an equivalent supported local request-routing surface, so Usage Guard
+does not claim to remove images from Codex context.
+
 ### Optional Claude request diagnostics
 
-Usage Guard is not an API proxy. When the separately installed local pxpipe
-proxy has a fresh `~/.pxpipe/events.jsonl` ledger, the `status` command, MCP
-status tool, and escalation notification can surface request metadata that
-explains cost:
+Screenshot Memory is a narrow local request gateway, not a hosted API service.
+When the separately installed local pxpipe proxy has a fresh
+`~/.pxpipe/events.jsonl` ledger, the `status` command, MCP status tool, and
+escalation notification can surface request metadata that explains cost:
 
 - baseline context tokens
 - resident image count
@@ -162,11 +195,12 @@ manufacture an estimate.
 - Codex CLI: plugin, hooks, MCP, and native status segments.
 - Claude Desktop Code tab, local sessions: plugin, session/prompt hooks, MCP,
   aggregate five-hour/weekly cache ingestion, and background macOS
-  notifications. Sessions receive one stable quality contract at start, one
-  in-chat cue when their state changes into `WATCH` or `PROTECT`, and a compact
-  post-response usage footer rendered by Claude's `Stop` hook. The footer is a
-  host `systemMessage`; the model does not generate it and it is not injected as
-  additional context.
+  notifications, plus five-turn Screenshot Memory after starting a new session
+  with the installed local gateway. Sessions receive one stable quality
+  contract at start, one in-chat cue when their state changes into `WATCH` or
+  `PROTECT`, and a compact post-response usage footer rendered by Claude's
+  `Stop` hook. The footer is a host `systemMessage`; the model does not generate
+  it and it is not injected as additional context.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
 - Claude Desktop SSH and remote sessions: do not assume that the local desktop
   aggregate cache describes the remote account or that provider hooks are
@@ -218,9 +252,10 @@ and never produce a hard block.
 
 ## Privacy
 
-Usage Guard is local-only by default. It does not read or store:
+Usage Guard is local-only by default. It does not store:
 
 - prompts or transcript bodies
+- screenshots or other image payloads
 - source code or diffs
 - cookies, OAuth tokens, or provider auth files
 - API keys
@@ -244,6 +279,13 @@ pxpipe rows. If transcript support is ever added, duplicated streaming records
 must be grouped by request/message ID and the maximum usage values retained;
 naive line summation is explicitly prohibited.
 
+Screenshot Memory transiently parses outbound Claude JSON requests in local
+memory to identify image blocks and their surrounding text. It forwards the
+request to the configured upstream and does not write prompt text, assistant
+text, image data, authorization headers, or transformed request bodies to disk.
+Its status file contains only counts, byte totals, timestamps, retention
+configuration, and the upstream URL.
+
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
 
 ## Remove
@@ -255,7 +297,8 @@ npm uninstall --global @agent-layer/usage-guard
 
 The uninstall command removes both plugin integrations and restores the prior status-line settings without replacing unrelated current settings.
 On macOS it also unloads the Usage Guard background monitor and removes the
-native notification helper.
+native notification helper and Screenshot Memory gateway. Claude's prior
+`ANTHROPIC_BASE_URL` is restored.
 
 ## Development
 

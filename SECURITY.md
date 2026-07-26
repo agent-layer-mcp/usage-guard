@@ -47,6 +47,21 @@ cache, writes to the user-only Usage Guard state directory, and may display a
 local notification. It does not run as root and is removed by
 `usage-guard uninstall`.
 
+On macOS, the installer creates a second user LaunchAgent,
+`sh.agentlayer.usage-guard.screenshot-memory`. It binds only to
+`127.0.0.1:47822`, rejects a self-referencing upstream, enforces a bounded
+request body, and forwards to the Claude upstream that existed before
+installation. The prior `ANTHROPIC_BASE_URL` is recorded for exact rollback.
+The gateway runs as the current user and never as root.
+
+Screenshot Memory must inspect outbound Claude JSON in memory to replace
+expired image blocks. It does not log or persist request bodies, prompt text,
+assistant text, image bytes, credentials, or authorization headers. Its
+persistent status is numeric and is written atomically with user-only
+permissions. The saved host conversation is not changed. Requests that do not
+match supported Anthropic message endpoints pass through without
+transformation.
+
 The installer compiles a small, auditable Swift notification helper from the
 source bundled in `native/`, ad-hoc signs it, and stores it below the user-only
 Usage Guard state directory. It requests normal macOS notification permission
@@ -60,4 +75,6 @@ does not parse Claude transcript JSONL. Any future transcript-derived meter
 must group streaming duplicates by message/request ID and retain maximum usage
 values before aggregation; summing raw lines is prohibited.
 
-The dashboard binds to `127.0.0.1`, sends a restrictive content security policy, and exposes no credential-bearing endpoint. Do not proxy it to a public interface.
+The dashboard and Screenshot Memory gateway bind to `127.0.0.1`. The dashboard
+sends a restrictive content security policy and exposes no credential-bearing
+endpoint. Do not proxy either local service to a public interface.

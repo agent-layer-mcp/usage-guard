@@ -3,6 +3,7 @@ import { parseClaudeStatusLine } from "./providers/claude.mjs";
 import { readClaudeDesktopUsage } from "./providers/claude-desktop.mjs";
 import { fetchCodexSnapshot } from "./providers/codex.mjs";
 import { readPxpipeTelemetry } from "./providers/pxpipe.mjs";
+import { readScreenshotMemoryStatus } from "./screenshot-proxy.mjs";
 
 export function ingestClaudeStatus(store, input, now = Date.now()) {
   const snapshot = parseClaudeStatusLine(input, now);
@@ -62,6 +63,9 @@ export function completeStatus(store, options = {}) {
   });
   const claudeDecision = status.providers.find((item) => item.provider === "claude");
   const requestImpact = estimateRequestImpact(claudeDecision, claudeRequest);
+  const screenshotMemory = readScreenshotMemoryStatus({
+    env: options.env || process.env,
+  });
   return {
     ...status,
     privacy: {
@@ -72,6 +76,7 @@ export function completeStatus(store, options = {}) {
     diagnostics: {
       claudeRequest,
       requestImpact,
+      screenshotMemory,
     },
   };
 }

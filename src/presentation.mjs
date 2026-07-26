@@ -58,6 +58,7 @@ export function formatStatusText(status) {
   }
   const request = status.diagnostics?.claudeRequest;
   const impact = status.diagnostics?.requestImpact;
+  const screenshotMemory = status.diagnostics?.screenshotMemory;
   if (request && !request.stale) {
     output.push("Claude request diagnostics (local pxpipe)");
     output.push(`  Context tokens      ${formatNumber(request.contextTokens)}`);
@@ -79,8 +80,28 @@ export function formatStatusText(status) {
     output.push(`  Caveat              ${request.weighting.caveat}`);
     output.push("");
   }
+  if (screenshotMemory) {
+    output.push("Screenshot Memory (local)");
+    output.push(`  Visual tail         ${screenshotMemory.retentionTurns} user turns`);
+    output.push(`  Images summarized   ${formatNumber(screenshotMemory.imagesReplaced)}`);
+    output.push(`  Image bytes removed ${formatBytes(screenshotMemory.imageBytesReplaced)}`);
+    if (screenshotMemory.lastRequestImagesReplaced > 0) {
+      output.push(
+        `  Latest request      ${screenshotMemory.lastRequestImagesReplaced} image(s), `
+        + `${formatBytes(screenshotMemory.lastRequestBytesReplaced)} removed`,
+      );
+    }
+    output.push("");
+  }
   output.push("Local only: no prompts, source code, credentials, or telemetry stored.");
   return output.join("\n");
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(value)) return "unknown";
+  if (value < 1_024) return `${value} B`;
+  if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KB`;
+  return `${(value / 1_048_576).toFixed(1)} MB`;
 }
 
 function formatNumber(value) {

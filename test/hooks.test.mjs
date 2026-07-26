@@ -100,7 +100,7 @@ test("Claude stop hook shows a post-response usage footer without model context"
   assert.match(output.systemMessage, /SAFE/);
   assert.match(output.systemMessage, /quality locked/);
   assert.equal(output.hookSpecificOutput, undefined);
-  assert.equal(output.suppressOutput, true);
+  assert.equal(output.suppressOutput, undefined);
   assert.doesNotMatch(output.systemMessage, /must not be repeated/i);
   store.close();
 });

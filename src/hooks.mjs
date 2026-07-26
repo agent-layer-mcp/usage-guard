@@ -51,7 +51,6 @@ export async function runProviderHook(store, provider, input, options = {}) {
       : "";
     return {
       systemMessage: `${message}${screenshotMessage}`,
-      suppressOutput: true,
     };
   }
 

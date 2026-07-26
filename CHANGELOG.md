@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 - 2026-07-27
+
+- Keep Claude `Stop` hook output visible so Claude Desktop renders the compact
+  post-response Usage Guard footer instead of recording it only as a hidden
+  system-message attachment.
+
 ## 0.3.0 - 2026-07-27
 
 - Add local Screenshot Memory for Claude: screenshots remain visually live for

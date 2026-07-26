@@ -1,6 +1,6 @@
 {
   "name": "usage-guard",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Protect Claude Code and Codex quota without silently reducing model quality.",
   "author": {
     "name": "Agent Layer",

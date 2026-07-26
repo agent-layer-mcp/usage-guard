@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.3.1";
 export const PRODUCT_NAME = "Usage Guard";
 
 export const DEFAULT_CONFIG = Object.freeze({

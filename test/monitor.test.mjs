@@ -53,6 +53,52 @@ test("monitor notifies once on escalation and rearms after returning safe", asyn
   store.close();
 });
 
+test("monitor alerts when short-window pressure takes control at the same overall severity", async () => {
+  const store = new GuardStore({ filename: ":memory:" });
+  const notifications = [];
+  let now = Date.UTC(2026, 6, 30, 0, 0);
+  const save = (fiveHour, weekly) => store.saveSnapshot({
+    provider: "claude",
+    source: "test",
+    observedAt: now,
+    windows: [{
+      key: "five-hour",
+      label: "5 hour",
+      usedPercent: fiveHour,
+      windowMinutes: 300,
+      resetsAt: null,
+    }, {
+      key: "seven-day",
+      label: "weekly",
+      usedPercent: weekly,
+      windowMinutes: 10_080,
+      resetsAt: null,
+    }],
+  });
+  const cycle = () => runMonitorCycle(store, {
+    providers: ["claude"],
+    now,
+    claudeDesktop: { platform: "linux" },
+    notifier: (notification) => notifications.push(notification),
+  });
+
+  save(10, 70);
+  await cycle();
+  now += 5 * 60_000;
+  save(10, 85);
+  const weeklyProtect = await cycle();
+  assert.equal(weeklyProtect[0].decision.state, "protect");
+  assert.equal(weeklyProtect[0].notified, true);
+
+  now += 5 * 60_000;
+  save(80, 85);
+  const shortWindowProtect = await cycle();
+  assert.equal(shortWindowProtect[0].decision.state, "protect");
+  assert.equal(shortWindowProtect[0].notified, true);
+  assert.equal(notifications.length, 3);
+  store.close();
+});
+
 test("macOS notifier emits a visible AppleScript notification", () => {
   const calls = [];
   const shown = notifyMacOS({

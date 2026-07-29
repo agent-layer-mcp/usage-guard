@@ -1,8 +1,8 @@
 # Usage Guard Context Handoff
 
-Last updated: 2026-07-27 (Australia/Brisbane)
+Last updated: 2026-07-30 (Australia/Brisbane)
 
-## Start Here
+## Start here
 
 Repository:
 
@@ -14,323 +14,259 @@ Usage Guard is a local-first quota governor for Claude Code, Claude Desktop
 Code, Codex CLI, and Codex Desktop. It preserves a protected quota reserve
 without silently lowering the selected model or reasoning effort.
 
-The current installed release is `0.3.1`. The Git worktree was clean when this
-handoff was written.
+Release `0.4.0` is implemented, verified, installed locally, and committed with
+the subject `feat: enforce Claude usage and compact early`.
 
-## Current Product State
+## Why 0.4.0 was needed
 
-Usage Guard currently provides:
+The user exhausted Claude usage twice in less than an hour without seeing an
+intervention. The investigation found three product assumptions that were too
+weak:
 
-- Claude five-hour and weekly usage ingestion where the provider exposes it.
-- Claude Desktop aggregate five-hour and weekly usage ingestion from its local
-  plan history.
-- Codex rate-limit ingestion through the local Codex app-server.
-- Quality-preserving `SAFE`, `WATCH`, `PROTECT`, and `QUEUE` decisions.
-- Rapid-burn detection when Claude Desktop does not provide reset timestamps.
-- Authoritative reset retention when Claude Code provides provider reset data.
-- Claude and Codex plugin integrations.
-- Claude CLI and Codex native status-line integration.
-- A compact Claude post-response Usage Guard footer.
-- A local macOS monitor and native Usage Guard notifications.
-- Optional numeric request-cost diagnostics from the separately installed
-  pxpipe ledger.
-- Screenshot Memory for old Claude screenshots.
-- Local CLI, dashboard, and MCP status surfaces.
+1. Claude `PreToolUse` enforcement existed in code and tests but was not
+   registered in the shipped plugin.
+2. The post-response `Stop` hook's `systemMessage` was treated as a reliable
+   visible Desktop footer. It is not a dependable enforcement surface in the
+   observed Desktop build.
+3. `ANTHROPIC_BASE_URL` in `~/.claude/settings.json` was treated as proof that
+   Claude Desktop used Screenshot Memory. Desktop has a separate supported
+   Third-Party Inference configuration, so settings-file routing proves only
+   the Claude CLI path.
 
-Usage Guard is already enabled. There is no separate user-facing on/off switch
-required after installation.
+The background monitor also notified only when the provider-wide severity
+increased. A newly pressured short window could therefore become controlling
+without a second notification when the weekly window had already placed the
+provider at the same severity.
 
-## Latest Work
+## Supported controls confirmed
 
-### Screenshot Memory
+Claude's supported local Code controls provide:
 
-Release `0.3.0` added a localhost Claude request gateway:
+- `UserPromptSubmit` blocking before a new turn.
+- `PreToolUse` permission decisions, including visible `ask` and `deny`.
+- `PostToolBatch` blocking before the next model request.
+- `SessionStart` context injection.
+- Native proactive compaction through
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`.
+- `PostCompact` with Claude's provider-generated `compact_summary`.
 
-```text
-Claude local session
-        |
-        v
-Usage Guard Screenshot Memory
-http://127.0.0.1:47822
-        |
-        v
-pxpipe
-http://127.0.0.1:47821
-        |
-        v
-Anthropic
-```
+Claude Desktop does not expose a supported way for a plugin to silently create,
+submit, and switch to a fresh Code session. `claude://code/new` can prefill a
+composer, but supplying a folder still requires confirmation. The reliable
+fully automatic path is therefore native compaction inside the current session,
+with a durable handoff available if the user starts a fresh session.
 
-Behavior:
+## What 0.4.0 implements
 
-1. A screenshot remains visually present for five later user turns.
-2. Once five later user turns exist, future outbound Claude requests replace
-   the base64 image block with bounded contextual text.
-3. The memory contains the original user text, the first assistant response
-   immediately following the screenshot, image type, approximate size, and a
-   short content hash.
-4. The memory explicitly says it is contextual memory rather than a pixel-exact
-   transcription.
-5. The original saved conversation and attachment are not edited.
-6. No additional model call is made.
-7. Add `[usage-guard:pin-images]`, `[usage-guard:pin-screenshots]`, or
-   `#keep-screenshot` to the screenshot turn to retain its image payload.
+### Active-run enforcement
 
-Screenshot Memory stores only numeric operational status: request counts,
-replacement counts, approximate bytes removed, timestamps, retention setting,
-and upstream URL. It does not store prompts, assistant responses, images,
-authorization headers, credentials, or transformed request bodies.
+The Claude plugin now registers both `PreToolUse` and `PostToolBatch`.
 
-Codex does not currently expose an equivalent supported request-routing
-surface, so Screenshot Memory only applies to local Claude requests.
+- At `PROTECT`, the first tool boundary in a session returns the documented
+  `permissionDecision: "ask"`, which creates a visible approval gate.
+- At `QUEUE`, `PreToolUse` returns `permissionDecision: "deny"` plus the
+  universal stop fields.
+- At `QUEUE`, `PostToolBatch` independently blocks before another model request.
+- Missing or stale quota evidence still fails open.
 
-### Claude Desktop Footer
+The `Stop` footer remains a best-effort host message for compatible surfaces,
+not part of the safety boundary.
 
-Release `0.3.1` fixed the post-response footer. The `Stop` hook was running and
-producing a valid message, but `suppressOutput: true` caused Claude Desktop to
-record it without visibly rendering it.
+### Earlier compaction without reducing quality
 
-The flag has been removed. The hook now returns:
-
-```json
-{
-  "systemMessage": "UG 5h 10% | wk 31% | SAFE | quality locked"
-}
-```
-
-This footer is a host-rendered system message. It is not generated by the model
-and is not inserted as additional model context.
-
-## Immediate Verification For The Next Session
-
-Perform these checks before starting new feature work:
-
-1. Fully quit Claude Desktop, not merely close a task.
-2. Reopen Claude Desktop.
-3. Start a fresh local Code task.
-4. Complete one simple prompt.
-5. Confirm a compact footer appears after the assistant response:
-
-   ```text
-   UG 5h … | wk … | SAFE/WATCH/PROTECT | quality locked
-   ```
-
-6. Confirm the new Claude child process inherited Screenshot Memory:
-
-   ```bash
-   pgrep -f "claude --output-format stream-json" | tail -1
-   ps eww -p <PID> | tr ' ' '\n' | grep '^ANTHROPIC_BASE_URL='
-   ```
-
-   Expected:
-
-   ```text
-   ANTHROPIC_BASE_URL=http://127.0.0.1:47822
-   ```
-
-7. Confirm local gateway health:
-
-   ```bash
-   curl -sS http://127.0.0.1:47822/health
-   ```
-
-8. After testing a screenshot and sending five later user messages, inspect:
-
-   ```bash
-   usage-guard screenshot-memory status
-   ```
-
-The last observed pre-restart Claude task was pinned to plugin `0.2.6` and had
-inherited `ANTHROPIC_BASE_URL=https://api.anthropic.com`. The installed plugin
-is now `0.3.1`, and `~/.claude/settings.json` correctly points new Claude
-processes to `http://127.0.0.1:47822`.
-
-## Verified Installation State
-
-At handoff time:
+The installer configures Claude's native proactive compaction at 40% of the
+active model window by default:
 
 ```text
-Usage Guard version: 0.3.1
-Claude CLI:           2.1.220
-Codex CLI:            0.144.4
-Screenshot Memory:    http://127.0.0.1:47822
-Screenshot upstream:  http://127.0.0.1:47821
-Visual retention:     5 later user turns
-Quality lock:         enabled
-Claude plugin:        installed and enabled
-Codex plugin:         installed and enabled
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000
+CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=40
 ```
 
-`usage-guard doctor` passed every check, including:
-
-- absolute desktop runtime
-- plugin bootstrap
-- Claude status line
-- Codex app-server and status line
-- native desktop notifications
-- one-minute desktop monitor
-- Screenshot Memory gateway
-- Claude and Codex plugins
-- Claude Desktop aggregate cache
-- Claude and Codex meters
-
-The exact live quota percentages will naturally change.
-
-## Important Commands
+Claude performs the summary using its own active-session compaction machinery.
+Usage Guard does not substitute a smaller model, lower reasoning effort, or
+invent a summary. The threshold can be changed during installation with:
 
 ```bash
-cd /Users/ryanjones/Documents/usage-guard
-
-# Product status
-usage-guard status
-usage-guard doctor
-usage-guard screenshot-memory status
-
-# Gateway health
-curl -sS http://127.0.0.1:47822/health
-
-# Development verification
-npm run check
-npm test
-npm pack --dry-run
-
-# Reinstall current local build
-usage-guard install
+usage-guard install --auto-compact-percent 50
 ```
 
-## Key Source Files
+The installer records and restores the user's prior values exactly.
+
+### Durable compaction handoff
+
+After a manual or automatic compaction, `PostCompact` stores Claude's supplied
+compact summary at:
 
 ```text
-src/screenshot-memory.mjs
-  Pure five-user-turn screenshot replacement transform.
+~/.usage-guard/handoffs/<project-key>/context-handoff.md
+```
 
-src/screenshot-proxy.mjs
-  Localhost gateway, request forwarding, response streaming, and numeric stats.
+Properties:
 
-src/install.mjs
-  Claude/Codex settings, LaunchAgents, rollback, and upstream chaining.
+- keyed by the Git common directory so worktrees share project continuity
+- stored outside the repository
+- private directories and mode `0600` files
+- atomic write
+- raw transcript is never read
+- summary is bounded to 40,000 characters
+- fresh-session injection carries the full bounded summary and is capped at
+  48,000 characters including the handoff wrapper
+- the same session does not receive its own handoff
+- a different session for the same project receives it through `SessionStart`
+- handoffs older than seven days are deleted when encountered
+- `usage-guard reset` deletes all handoffs
+- `usage-guard config compactionHandoffEnabled false` disables the feature
+
+The handoff can contain conversation facts because it is Claude's compact
+summary. This is disclosed in `PRIVACY.md`, CLI privacy output, and MCP status.
+
+### Notification correction
+
+The one-minute macOS monitor now notifies when a newly pressured quota window
+becomes controlling at the same or a higher overall severity. This fixes the
+case where an already-pressured weekly window masked a fast five-hour
+escalation.
+
+### Honest Desktop gateway diagnosis
+
+`usage-guard doctor` now reports Claude Desktop gateway routing as `WAIT` unless
+it can be verified separately. A normal claude.ai subscriber Desktop session
+remains direct. Users with a credentialed Third-Party Inference gateway can
+configure the localhost Screenshot Memory route intentionally, but Usage Guard
+does not claim that settings-file environment variables configure Desktop.
+
+## Verified local installation
+
+Installed on 2026-07-30:
+
+```text
+Usage Guard source:       0.4.0
+Claude CLI:               2.1.220
+Codex CLI:                0.146.0
+Native early compact:     40%
+Auto-compact window:      1,000,000
+Claude plugin:            installed and enabled
+Codex plugin:             installed and enabled
+Desktop monitor:          enabled, one-minute interval
+Native notifications:     enabled
+Screenshot Memory:        enabled for Claude CLI, five-user-turn visual tail
+Claude Desktop gateway:   deliberately unverified
+Quality lock:             enabled
+```
+
+The installed status-line command and hook bootstrap use absolute Node and
+Usage Guard paths, so they do not depend on a GUI process inheriting Terminal's
+`PATH`.
+
+A direct native notification smoke test exited successfully after installation
+with the message:
+
+```text
+Early compaction is active at 40%. Claude is currently WATCH:
+8% five-hour, 70% weekly.
+```
+
+The live percentages will naturally change. At verification time:
+
+```text
+Claude: WATCH — five-hour 8%, weekly 70%, weekly reset in about 1d 2h
+Codex:  SAFE  — weekly 6%, reset in about 6d 7h
+```
+
+The real `PreToolUse` hook was also exercised against the installed state and
+returned the expected `WATCH` context. The visible `PROTECT` ask and `QUEUE`
+deny paths are covered by deterministic integration tests without consuming
+additional Claude quota.
+
+## Verification completed
+
+```text
+npm run check
+  Checked 35 JavaScript modules.
+
+npm test
+  67 passed, 0 failed.
+
+npm pack --dry-run
+  Passed prepack checks and included the new handoff module.
+
+claude plugin validate ./plugins/usage-guard
+  Passed.
+
+node bin/usage-guard.mjs doctor
+  All installed controls passed.
+  Claude Desktop gateway correctly reported WAIT/unverified.
+```
+
+## Key files changed
+
+```text
+src/compaction-handoff.mjs
+  Private project identity, bounded handoff writes/reads, retention, reset.
 
 src/hooks.mjs
-  Claude lifecycle decisions and visible post-response footer.
+  SessionStart handoff injection, PostCompact storage, PreToolUse ask/deny,
+  PostToolBatch circuit breaker.
 
-src/service.mjs
-  Complete status assembly and Screenshot Memory diagnostics.
+plugins/usage-guard/hooks/hooks.json
+  Registers PreToolUse, PostToolBatch, and PostCompact.
 
+src/install.mjs
+  Native 40% auto-compaction configuration, exact rollback, honest doctor.
+
+src/monitor.mjs
+  Alerts when the controlling quota window changes under equal severity.
+
+src/config.mjs
+src/mcp.mjs
+src/policy.mjs
 src/presentation.mjs
-  CLI rendering for quota and Screenshot Memory status.
+  Configuration and privacy/status exposure.
 
-bin/usage-guard.mjs
-  CLI commands, proxy entrypoint, install, doctor, and monitor.
-
-test/screenshot-memory.test.mjs
-test/screenshot-proxy.test.mjs
-test/hooks.test.mjs
-test/install.test.mjs
-  Primary regression coverage for the latest work.
-```
-
-## Recent Commits
-
-```text
-882f99b fix: show Claude desktop usage footer
-625393c feat: add five-turn screenshot memory
-78d349b feat: show usage after Claude responses
-738d682 fix: retain authoritative Claude reset times
-e77e55c fix: harden usage decisions from field data
-75f187c feat: surface local Claude request cost drivers
-```
-
-## Verification Coverage
-
-The current suite has 63 passing tests. Important cases include:
-
-- screenshots remain live inside the five-user-turn tail
-- screenshots expire at five later user turns
-- pinned screenshots remain live
-- original request objects are not mutated
-- the replacement does not invent a visual interpretation
-- malformed JSON reaches the upstream for normal validation
-- streaming Anthropic responses remain streamed
-- self-referencing and credential-bearing upstream URLs are rejected
-- installer chains to the prior Claude upstream
-- uninstall restores the exact prior upstream
-- Claude `Stop` output remains visible
-- no assistant response text is copied into the Usage Guard footer
-
-## Security And Privacy Rules
-
-Do not weaken these:
-
-1. Never silently change model or reasoning quality.
-2. Never infer provider reset times from aggregate usage drops.
-3. Missing or stale provider data must fail open rather than block.
-4. Bind dashboards and request gateways to localhost only.
-5. Never persist prompt text, assistant text, screenshots, request bodies,
-   credentials, authorization headers, cookies, or provider auth files.
-6. Keep Screenshot Memory deterministic; do not add a hidden model call.
-7. Preserve the original conversation and attachment.
-8. Preserve and restore the user's prior `ANTHROPIC_BASE_URL`.
-9. Keep pxpipe optional and separately installed.
-10. Do not claim Screenshot Memory works for Codex until Codex exposes a
-    supported equivalent request path.
-
-See:
-
-```text
 README.md
 PRIVACY.md
 SECURITY.md
 docs/architecture.md
 CHANGELOG.md
+  Supported-control and data-boundary documentation.
 ```
 
-## Known Limitations
+## Remaining acceptance check
 
-- Claude Desktop's aggregate plan history does not include reset timestamps.
-- Claude Code status-line data is the authoritative source for reset times when
-  supplied.
-- Existing Claude tasks retain the plugin version and environment present when
-  their child process started.
-- Claude Desktop must be fully restarted for a changed
-  `ANTHROPIC_BASE_URL` to reach new child processes.
-- Screenshot Memory summarizes context already present in the conversation; it
-  is not a guaranteed visual transcription.
-- Reattach a screenshot when exact pixels are required again.
-- Provider quota formulas remain private. Request-weight diagnostics are
-  directional rather than claims about Anthropic's Max-plan accounting.
+Do not spend Claude quota solely to test the UI while Claude is pressured.
+During the next normal fresh Claude Desktop Code task:
 
-## Recommended Next Work
+1. Confirm the Usage Guard hooks are trusted/enabled if Desktop prompts.
+2. Let the session run normally.
+3. If policy reaches `PROTECT`, confirm the next tool call shows a Usage Guard
+   approval gate.
+4. If a compaction occurs, confirm a private handoff appears below
+   `~/.usage-guard/handoffs/`.
+5. Start a fresh task for the same repository only when naturally useful and
+   confirm continuity from the compact summary.
 
-After the footer and gateway are confirmed in a fresh Claude Desktop task:
+No product work should attempt to fake an automatic clear/new-task action until
+Claude Desktop exposes a supported session-creation API.
 
-1. Run a real screenshot-expiry dogfood test and record before/after pxpipe
-   image counts.
-2. Confirm the visible footer behavior in Claude CLI as well as Desktop.
-3. Consider adding a small local dashboard section for Screenshot Memory
-   savings.
-4. Add a documented configuration command for changing the five-turn retention
-   rather than requiring reinstall options.
-5. Avoid expanding scope until the real desktop dogfood path is proven.
+## Commands
 
-## Prompt For The New Session
+```bash
+cd /Users/ryanjones/Documents/usage-guard
 
-```text
-Take over the Usage Guard project at /Users/ryanjones/Documents/usage-guard.
+node bin/usage-guard.mjs status
+node bin/usage-guard.mjs doctor
+node bin/usage-guard.mjs config
 
-Read context-handoff.md, README.md, PRIVACY.md, SECURITY.md, and
-docs/architecture.md first. Check git status and run usage-guard doctor.
+npm run check
+npm test
+npm pack --dry-run
 
-The immediate task is to verify Usage Guard 0.3.1 in a freshly restarted Claude
-Desktop local Code task:
-1. confirm the compact post-response UG footer is visible;
-2. confirm the Claude child process uses ANTHROPIC_BASE_URL=http://127.0.0.1:47822;
-3. dogfood Screenshot Memory by attaching a screenshot, sending five later user
-messages, and confirming the old image is replaced while contextual memory
-remains;
-4. inspect numeric Screenshot Memory and pxpipe diagnostics without reading or
-storing transcript content.
-
-Fix any real integration failures found. Preserve the quality lock and privacy
-boundary. Run checks and tests, update documentation when behavior changes, and
-commit coherent verified work automatically.
+claude plugin validate ./plugins/usage-guard
 ```
+
+## Next action
+
+Use the next normal Claude Desktop task as the UI acceptance test. Do not
+revive the old assumptions that a `Stop` `systemMessage` must be visible or
+that `ANTHROPIC_BASE_URL` in Claude settings controls Desktop.

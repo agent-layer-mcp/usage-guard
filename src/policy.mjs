@@ -120,9 +120,10 @@ export function buildProviderDecision(store, provider, options = {}) {
 export function buildStatus(store, options = {}) {
   const providers = options.providers || ["claude", "codex"];
   const decisions = providers.map((provider) => buildProviderDecision(store, provider, options));
+  const config = options.config || store.getConfig();
   return {
     generatedAt: options.now ?? Date.now(),
-    config: options.config || store.getConfig(),
+    config,
     providers: decisions,
     recentDecisions: store.recentDecisions(10),
     privacy: {
@@ -130,6 +131,7 @@ export function buildStatus(store, options = {}) {
       sourceCodeStored: false,
       credentialsStored: false,
       telemetryEnabled: false,
+      compactionSummaryStoredLocally: config.compactionHandoffEnabled,
     },
   };
 }

@@ -25,6 +25,40 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/node-bootstrap.sh\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-router.mjs\"",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/node-bootstrap.sh\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-router.mjs\"",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/node-bootstrap.sh\" \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-router.mjs\"",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

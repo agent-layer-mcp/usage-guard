@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-export const VERSION = "0.3.1";
+export const VERSION = "0.4.0";
 export const PRODUCT_NAME = "Usage Guard";
 
 export const DEFAULT_CONFIG = Object.freeze({
@@ -13,6 +13,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   rapidBurnProtectMinutes: 30,
   contextWatchPercent: 70,
   contextProtectPercent: 85,
+  compactionHandoffEnabled: true,
   staleAfterMinutes: 15,
   dashboardPort: 4765,
 });
@@ -58,6 +59,7 @@ export function normalizeConfig(input = {}) {
     rapidBurnProtectMinutes,
     contextWatchPercent,
     contextProtectPercent,
+    compactionHandoffEnabled: merged.compactionHandoffEnabled !== false,
     staleAfterMinutes: clampNumber(merged.staleAfterMinutes, 1, 240, 15),
     dashboardPort: Math.round(clampNumber(merged.dashboardPort, 1024, 65535, 4765)),
   };

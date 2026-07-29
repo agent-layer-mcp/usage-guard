@@ -9,7 +9,7 @@ Usage Guard is a local Node.js tool with these entry surfaces:
    history because the Desktop Code surface does not run the custom status-line
    command.
 4. Claude and Codex lifecycle hooks ask the policy engine for a decision before
-   each prompt; Claude also rechecks at tool boundaries.
+   each prompt; Claude also rechecks before tool calls and after tool batches.
 5. A macOS LaunchAgent checks Claude's aggregate cache once per minute and shows
    a local notification when policy escalates.
 6. The MCP server exposes status and decisions to provider desktop sessions.
@@ -18,6 +18,9 @@ Usage Guard is a local Node.js tool with these entry surfaces:
 8. A localhost Screenshot Memory gateway keeps recent Claude screenshots
    visually live, then replaces old base64 image blocks on future requests with
    bounded contextual text.
+9. Claude's native proactive compaction runs at 40% by default. `PostCompact`
+   saves the provider-generated summary in a private project-keyed handoff, and
+   a different `SessionStart` receives it as continuity context.
 
 ## Data flow
 
@@ -66,11 +69,15 @@ Usage Guard can:
 
 - preserve a reserve by blocking a new prompt
 - stop a Claude agentic run at a tool boundary after the reserve is reached
+- stop a Claude loop after a completed tool batch before the next model request
+- force one visible permission decision when a session first enters `PROTECT`
 - show local macOS notifications while Claude Desktop is working
 - inject pacing guidance into a turn
 - configure Claude and Codex status-line surfaces
 - suggest bounded context and concurrency
 - advise a safe handoff/compaction boundary for a pressured Claude session
+- configure Claude's supported proactive compaction threshold and carry its
+  compact summary into a fresh local session
 - provide a reset-aware explanation
 
 Usage Guard does not mutate the host's active main-thread model or reasoning setting. Plugin APIs do not currently provide one portable, documented way to make that change across both products, and silent mutation would violate the quality contract.
@@ -81,6 +88,12 @@ to `watch` or `protect`, but never to `queue`. Claude Desktop and Codex expose
 native context meters to their host UIs but not through every stable Usage Guard
 hook path. Usage Guard relies on host auto-compaction in those surfaces and
 does not read transcript contents to estimate context.
+
+Compaction handoffs do not inspect transcripts either. Claude supplies
+`compact_summary` directly to `PostCompact`; Usage Guard writes that bounded
+summary below its private state directory. Git's common directory is used as
+the project identity so separate Desktop worktrees can share the same handoff
+without writing an untracked file into the repository.
 
 The Claude Desktop cache adapter does not need a reset timestamp to enforce the
 reserve or detect rapid burn. It never infers a reset from aggregate percentage

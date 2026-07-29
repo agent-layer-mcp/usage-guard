@@ -40,6 +40,17 @@ then execute the recorded Node binary. This avoids relying on a Terminal
 `PATH`, which desktop GUI processes may not inherit. The JavaScript routers
 then read the full install record for the Usage Guard CLI and provider paths.
 
+Claude `PreToolUse` uses the documented permission-decision schema and a
+universal stop result at the protected reserve. `PostToolBatch` independently
+stops the loop before the next model request. Missing or stale quota data still
+fails open.
+
+The `PostCompact` hook stores only Claude's supplied compact summary, never the
+raw JSONL transcript. Handoffs live below the user-only Usage Guard state
+directory, are keyed by a hash of the repository identity, are written
+atomically with mode `0600`, and are injected only into a different recent
+session for the same repository.
+
 On macOS, the installer also creates the user LaunchAgent
 `sh.agentlayer.usage-guard.monitor`. It runs the recorded local Node and Usage
 Guard CLI once per minute, reads only the same allowlisted aggregate Claude
@@ -53,6 +64,11 @@ On macOS, the installer creates a second user LaunchAgent,
 request body, and forwards to the Claude upstream that existed before
 installation. The prior `ANTHROPIC_BASE_URL` is recorded for exact rollback.
 The gateway runs as the current user and never as root.
+
+`ANTHROPIC_BASE_URL` in Claude settings configures Claude CLI sessions but is
+not evidence that Claude Desktop uses the gateway. Desktop routing must use
+Claude's supported Third-Party Inference configuration. `doctor` keeps that
+surface unverified rather than reporting a false pass.
 
 Screenshot Memory must inspect outbound Claude JSON in memory to replace
 expired image blocks. It does not log or persist request bodies, prompt text,

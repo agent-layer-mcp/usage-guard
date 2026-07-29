@@ -13,6 +13,7 @@ import path from "node:path";
 import { parse } from "smol-toml";
 import {
   configureBackgroundMonitor,
+  AUTO_COMPACT_WINDOW,
   configureNativeNotifier,
   configureScreenshotMemoryProxy,
   inspectConfiguredIntegrations,
@@ -67,9 +68,14 @@ test("install and uninstall restore prior status-line settings", () => {
     [process.execPath, cliPath, "statusline", "claude"].map(JSON.stringify).join(" "),
   );
   assert.ok(installedCodex.tui.status_line.includes("five-hour-limit"));
+  assert.equal(
+    installedClaude.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    String(AUTO_COMPACT_WINDOW),
+  );
+  assert.equal(installedClaude.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, "40");
   assert.deepEqual(
     inspectConfiguredIntegrations({ homeDir: home, recordPath, platform: "linux" }).map((check) => check.ok),
-    [true, true, true, true, true, true, true, true],
+    [true, true, true, true, true, true, true, true, true, true],
   );
   assert.equal(
     readFileSync(path.join(stateHome, "node-runtime"), "utf8").trim(),
@@ -88,6 +94,7 @@ test("install and uninstall restore prior status-line settings", () => {
   const restoredClaude = JSON.parse(readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   const restoredCodexRaw = readFileSync(path.join(home, ".codex", "config.toml"), "utf8");
   assert.equal(restoredClaude.statusLine.command, "old");
+  assert.equal(restoredClaude.env, undefined);
   assert.deepEqual(parse(restoredCodexRaw).tui.status_line, ["model"]);
   assert.match(restoredCodexRaw, /# user comment/);
 });
@@ -119,10 +126,59 @@ test("plugin manifests bootstrap without a bare Node command", () => {
   const mcp = JSON.parse(readFileSync("plugins/usage-guard/.mcp.json", "utf8"));
   assert.doesNotMatch(hooks, /"command":\s*"node/);
   assert.match(hooks, /node-bootstrap\.sh/);
-  assert.equal(parsedHooks.hooks.PreToolUse, undefined);
+  assert.equal(parsedHooks.hooks.PreToolUse.length, 1);
+  assert.equal(parsedHooks.hooks.PostToolBatch.length, 1);
+  assert.equal(parsedHooks.hooks.PostCompact.length, 1);
   assert.equal(parsedHooks.hooks.Stop.length, 1);
   assert.equal(mcp.mcpServers["usage-guard"].command, "/bin/sh");
   assert.match(mcp.mcpServers["usage-guard"].args[0], /node-bootstrap\.sh$/);
+});
+
+test("install and uninstall preserve prior Claude compaction settings", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-compact-settings-"));
+  const home = path.join(root, "home");
+  const stateHome = path.join(root, "state");
+  const recordPath = path.join(stateHome, "install-record.json");
+  const settingsPath = path.join(home, ".claude", "settings.json");
+  mkdirSync(path.dirname(settingsPath), { recursive: true });
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify({
+    env: {
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: "500000",
+      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "65",
+      KEEP_ME: "yes",
+    },
+  }));
+
+  installIntegrations({
+    homeDir: home,
+    stateHome,
+    recordPath,
+    installPlugins: false,
+    installMonitor: false,
+    platform: "linux",
+    autoCompactPercent: 40,
+    runtime: {
+      command: process.execPath,
+      argsPrefix: [path.join(root, "usage-guard.mjs")],
+    },
+    providerPaths: {
+      claude: process.execPath,
+      codex: process.execPath,
+    },
+  });
+
+  const installed = JSON.parse(readFileSync(settingsPath, "utf8"));
+  assert.equal(installed.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, String(AUTO_COMPACT_WINDOW));
+  assert.equal(installed.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, "40");
+
+  uninstallIntegrations({ recordPath, removePlugins: false });
+  const restored = JSON.parse(readFileSync(settingsPath, "utf8"));
+  assert.deepEqual(restored.env, {
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: "500000",
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "65",
+    KEEP_ME: "yes",
+  });
 });
 
 test("installer refreshes an existing Claude plugin version", () => {

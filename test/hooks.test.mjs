@@ -152,7 +152,8 @@ test("Claude pre-tool hook stops an active run at the protected reserve", async 
 
   assert.equal(output.continue, false);
   assert.match(output.stopReason, /tool boundary/i);
-  assert.equal(output.hookSpecificOutput, undefined);
+  assert.equal(output.hookSpecificOutput.permissionDecision, "deny");
+  assert.match(output.hookSpecificOutput.permissionDecisionReason, /tool boundary/i);
   store.close();
 });
 
@@ -226,7 +227,13 @@ test("Claude hooks show one chat cue per watch or protect transition per session
   const repeatedProtectFromTool = await runProviderHook(store, "claude", input, {
     claudeDesktop: { platform: "linux" },
   });
-  assert.deepEqual(repeatedProtectFromTool, {});
+  assert.equal(repeatedProtectFromTool.hookSpecificOutput.permissionDecision, "ask");
+  assert.match(repeatedProtectFromTool.hookSpecificOutput.permissionDecisionReason, /one active implementation path/i);
+
+  const acceptedProtectFromTool = await runProviderHook(store, "claude", input, {
+    claudeDesktop: { platform: "linux" },
+  });
+  assert.deepEqual(acceptedProtectFromTool, {});
 
   const otherSession = await runProviderHook(store, "claude", {
     ...input,
@@ -235,6 +242,106 @@ test("Claude hooks show one chat cue per watch or protect transition per session
     claudeDesktop: { platform: "linux" },
   });
   assert.match(otherSession.systemMessage, /PROTECT/);
+  store.close();
+});
+
+test("Claude post-tool batch hook stops before another model request at reserve", async () => {
+  const now = Date.now();
+  const store = new GuardStore({ filename: ":memory:" });
+  store.saveSnapshot({
+    provider: "claude",
+    source: "test",
+    observedAt: now,
+    windows: [{
+      key: "five-hour",
+      label: "5 hour",
+      usedPercent: 96,
+      windowMinutes: 300,
+      resetsAt: null,
+    }],
+  });
+
+  const output = await runProviderHook(store, "claude", {
+    hook_event_name: "PostToolBatch",
+    session_id: "active-session",
+    tool_uses: [],
+  }, { claudeDesktop: { platform: "linux" } });
+
+  assert.equal(output.decision, "block");
+  assert.equal(output.continue, false);
+  assert.match(output.reason, /before another model request/i);
+  store.close();
+});
+
+test("Claude compact summary is saved and injected into a different session", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-handoff-"));
+  const stateHome = path.join(root, "state");
+  const store = new GuardStore({ filename: ":memory:" });
+  store.saveSnapshot({
+    provider: "claude",
+    source: "test",
+    observedAt: Date.now(),
+    windows: [{
+      key: "five-hour",
+      label: "5 hour",
+      usedPercent: 12,
+      windowMinutes: 300,
+      resetsAt: null,
+    }],
+  });
+
+  const written = await runProviderHook(store, "claude", {
+    hook_event_name: "PostCompact",
+    session_id: "old-session",
+    cwd: root,
+    trigger: "auto",
+    compact_summary: "The implementation is complete through the parser. Next, verify the desktop hook.",
+  }, {
+    claudeDesktop: { platform: "linux" },
+    compactionHandoff: { stateHome },
+  });
+  assert.match(written.systemMessage, /saved the compacted context handoff/i);
+
+  const resumed = await runProviderHook(store, "claude", {
+    hook_event_name: "SessionStart",
+    session_id: "new-session",
+    cwd: root,
+  }, {
+    claudeDesktop: { platform: "linux" },
+    compactionHandoff: { stateHome },
+  });
+  assert.match(resumed.hookSpecificOutput.additionalContext, /implementation is complete through the parser/i);
+
+  const sameSession = await runProviderHook(store, "claude", {
+    hook_event_name: "SessionStart",
+    session_id: "old-session",
+    cwd: root,
+  }, {
+    claudeDesktop: { platform: "linux" },
+    compactionHandoff: { stateHome },
+  });
+  assert.doesNotMatch(sameSession.hookSpecificOutput.additionalContext, /implementation is complete through the parser/i);
+
+  const detailedSummary = `${"A".repeat(39_000)}\nCritical final continuation detail`;
+  await runProviderHook(store, "claude", {
+    hook_event_name: "PostCompact",
+    session_id: "detailed-old-session",
+    cwd: root,
+    trigger: "auto",
+    compact_summary: detailedSummary,
+  }, {
+    claudeDesktop: { platform: "linux" },
+    compactionHandoff: { stateHome },
+  });
+  const detailedResume = await runProviderHook(store, "claude", {
+    hook_event_name: "SessionStart",
+    session_id: "detailed-new-session",
+    cwd: root,
+  }, {
+    claudeDesktop: { platform: "linux" },
+    compactionHandoff: { stateHome },
+  });
+  assert.match(detailedResume.hookSpecificOutput.additionalContext, /Critical final continuation detail/);
   store.close();
 });
 

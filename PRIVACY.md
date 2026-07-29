@@ -46,6 +46,16 @@ install or configure pxpipe and does not send this metadata to Agent Layer.
 
 Prompt text may be inspected transiently by a deterministic task classifier so Usage Guard can distinguish quality-sensitive work from mechanical work. Prompt text is never written to the database, logs, decisions, or network.
 
+When compaction handoffs are enabled, Claude's supported `PostCompact` hook
+supplies the compact summary that Claude already generated. Usage Guard writes
+that summary to a private local handoff file keyed by the repository's Git
+common directory. A different recent local session for the same repository can
+receive the handoff through `SessionStart`. Usage Guard does not read, parse, or
+copy the raw transcript to create it. Because Claude's compact summary can
+contain facts from prompts and responses, the handoff may contain conversation
+content. Disable it with
+`usage-guard config compactionHandoffEnabled false`.
+
 When Screenshot Memory is enabled, its localhost gateway transiently parses
 outbound Claude request JSON in memory. A screenshot remains byte-for-byte in
 the request for five later user turns. After that point, the gateway replaces
@@ -66,7 +76,7 @@ data is numeric operational status:
 ## Data not accessed or stored
 
 - source files, diffs, repository contents, or command output
-- transcript bodies (Usage Guard does not parse Claude session JSONL)
+- raw transcript bodies (Usage Guard does not parse Claude session JSONL)
 - screenshot or image payloads
 - cookies or browser sessions
 - Claude or OpenAI auth files and access tokens
@@ -86,8 +96,14 @@ operating system supports them.
 Screenshot Memory stores its numeric status at
 `~/.usage-guard/screenshot-memory-status.json` with user-only permissions.
 
-Use `usage-guard reset` to delete quota observations, decisions, and local alert
-or notice state. Use `usage-guard uninstall` to remove provider integrations, unload the
+Claude compact summaries are stored at
+`~/.usage-guard/handoffs/<project-key>/context-handoff.md` with user-only
+permissions when compaction handoffs are enabled. They are not stored in the
+Usage Guard database or sent to Agent Layer. A handoff is no longer injected
+after seven days and is deleted when encountered after that retention period.
+
+Use `usage-guard reset` to delete quota observations, decisions, local alert or
+notice state, and compaction handoffs. Use `usage-guard uninstall` to remove provider integrations, unload the
 macOS background monitor, and restore prior settings.
 
 ## Network behavior

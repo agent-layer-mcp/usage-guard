@@ -36,8 +36,19 @@ export async function runMonitorCycle(store, options = {}) {
     const decision = providerDecision(store, provider, { now: options.now });
     const previous = store.getAlertState(provider);
     const controlling = controllingWindow(decision);
+    const controllingWindowEscalated = Boolean(
+      previous?.windowKey
+      && controlling?.key
+      && controlling.key !== previous.windowKey
+      && isAlertState(controlling.state)
+      && STATE_ORDER[decision.state] >= STATE_ORDER[previous.state],
+    );
     const shouldNotify = isAlertState(decision.state)
-      && (!previous || STATE_ORDER[decision.state] > STATE_ORDER[previous.state]);
+      && (
+        !previous
+        || STATE_ORDER[decision.state] > STATE_ORDER[previous.state]
+        || controllingWindowEscalated
+      );
 
     if (shouldNotify) {
       const request = provider === "claude"

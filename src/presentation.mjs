@@ -93,7 +93,11 @@ export function formatStatusText(status) {
     }
     output.push("");
   }
-  output.push("Local only: no prompts, source code, credentials, or telemetry stored.");
+  output.push(
+    status.config.compactionHandoffEnabled
+      ? "Local only: quota data stays local; Claude compact summaries are kept only in private handoff files."
+      : "Local only: no prompts, source code, credentials, or telemetry stored.",
+  );
   return output.join("\n");
 }
 

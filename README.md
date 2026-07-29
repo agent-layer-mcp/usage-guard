@@ -23,6 +23,10 @@ reset time when the provider has not supplied one.
 - Reduces avoidable context and speculative concurrency before changing task timing.
 - Keeps the active model and reasoning effort locked by default.
 - Blocks new quota-heavy turns at the reserve and explains when work can resume.
+- Rechecks quota before Claude tool calls and after tool batches so an active
+  desktop run can stop before another expensive model request.
+- Uses Claude's native compaction at 40% by default and saves the provider's
+  compact summary as a private project-keyed handoff for a fresh local session.
 - Adds a Claude Code status line and Codex's built-in five-hour/weekly status segments.
 - Shows the same deliberate-choice notice in CLI and desktop plugin sessions.
 - Provides a local dashboard and MCP tools for agents.
@@ -51,8 +55,13 @@ The installer:
    to `WATCH`, `PROTECT`, or `QUEUE`, with legacy notification paths retained
    only as fallbacks.
 7. On macOS, installs Screenshot Memory as a localhost-only Claude request
-   gateway. It preserves any existing `ANTHROPIC_BASE_URL` as its upstream, so a
-   local proxy such as pxpipe remains in the request path.
+   gateway. It preserves any existing `ANTHROPIC_BASE_URL` as its upstream and
+   configures the Claude CLI route. Claude Desktop ignores that settings-file
+   route and must be configured separately through its supported Third-Party
+   Inference screen.
+8. Configures Claude's supported proactive compaction variables to compact at
+   40% of the active model window. The installer preserves and restores the
+   user's previous values exactly.
 
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 
@@ -77,6 +86,10 @@ usage-guard doctor
 usage-guard config
 usage-guard config enforcement protect weeklyReservePercent 7
 usage-guard config contextWatchPercent 70 contextProtectPercent 85
+usage-guard config compactionHandoffEnabled false
+
+# Choose a different native auto-compaction percentage during installation.
+usage-guard install --auto-compact-percent 50
 ```
 
 The dashboard runs on `http://127.0.0.1:4765` and binds only to localhost.
@@ -98,6 +111,31 @@ Context pressure never changes the selected model and never causes a hard block
 by itself. At the protect threshold, Usage Guard asks the agent to finish its
 current coherent step, update a durable handoff, and compact or start a fresh
 task before another large phase.
+
+### Early compaction and continuity
+
+Usage Guard configures Claude's documented
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` and
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` variables. The default is 40%. Claude still
+performs the compaction itself with the active session's summarization
+machinery; Usage Guard does not create a replacement summary or lower the
+model.
+
+After compaction, the supported `PostCompact` hook receives Claude's compact
+summary. Usage Guard stores that summary below
+`~/.usage-guard/handoffs/<project-key>/context-handoff.md` with user-only
+permissions. A different fresh local session for the same Git repository
+receives the recent handoff through its supported `SessionStart` context. The
+raw transcript is never read or copied. Disable this behavior with:
+
+```bash
+usage-guard config compactionHandoffEnabled false
+```
+
+Claude Desktop does not expose an official way for a plugin to silently create
+and submit a new Code session. Its deep link can only prefill a composer and
+always confirms a supplied folder. Native compaction in the same session is
+therefore the fully automatic continuity path.
 
 ## Provider signals
 
@@ -153,9 +191,19 @@ the memory, and it stores only numeric replacement counts and byte totals. On
 install it chains to the user's prior Claude upstream and restores that exact
 setting on uninstall.
 
-Screenshot Memory currently applies to local Claude requests. Codex does not
-offer an equivalent supported local request-routing surface, so Usage Guard
-does not claim to remove images from Codex context.
+Screenshot Memory applies to local Claude CLI requests after installation.
+Claude Desktop explicitly does not use `ANTHROPIC_BASE_URL` or `settings.json`
+for gateway routing. Its supported Third-Party Inference configuration uses a
+separate gateway credential path rather than silently proxying the user's
+normal claude.ai subscriber session. Usage Guard therefore does not enable or
+claim Screenshot Memory for a normal Desktop subscription session. Users who
+already operate a credentialed Desktop gateway can deliberately point that
+configuration at `http://127.0.0.1:47822` and verify it separately. See
+Anthropic's
+[gateway documentation](https://code.claude.com/docs/en/llm-gateway-connect).
+
+Codex does not offer an equivalent supported local request-routing surface, so
+Usage Guard does not claim to remove images from Codex context.
 
 ### Optional Claude request diagnostics
 
@@ -193,14 +241,15 @@ manufacture an estimate.
 - Codex Desktop Work/Codex sessions: local plugin, hooks, MCP, and native status
   segments.
 - Codex CLI: plugin, hooks, MCP, and native status segments.
-- Claude Desktop Code tab, local sessions: plugin, session/prompt hooks, MCP,
+- Claude Desktop Code tab, local sessions: plugin, session/prompt/tool hooks, MCP,
   aggregate five-hour/weekly cache ingestion, and background macOS
-  notifications, plus five-turn Screenshot Memory after starting a new session
-  with the installed local gateway. Sessions receive one stable quality
-  contract at start, one in-chat cue when their state changes into `WATCH` or
-  `PROTECT`, and a compact post-response usage footer rendered by Claude's
-  `Stop` hook. The footer is a host `systemMessage`; the model does not generate
-  it and it is not injected as additional context.
+  notifications. Sessions receive one stable quality contract at start.
+  Entering `PROTECT` forces one visible tool approval at the next tool boundary;
+  reaching `QUEUE` denies the tool and stops the run. `PostToolBatch` provides a
+  second stop before another model request. The compact `Stop` footer remains a
+  best-effort host message and is not treated as the enforcement surface.
+  Screenshot Memory requires the separate Desktop Third-Party Inference setup
+  described above.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
 - Claude Desktop SSH and remote sessions: do not assume that the local desktop
   aggregate cache describes the remote account or that provider hooks are
@@ -208,8 +257,10 @@ manufacture an estimate.
 
 Run `usage-guard doctor` after installation. It verifies both CLIs, the
 PATH-independent plugin bootstrap, absolute desktop runtime paths, status-line
-configuration, plugin enabled state, Claude Desktop aggregate-cache ingestion,
-meter freshness, and whether Claude has supplied a context observation.
+configuration, native early compaction, plugin enabled state, Claude Desktop
+aggregate-cache ingestion, meter freshness, and whether Claude has supplied a
+context observation. It deliberately reports Claude Desktop gateway routing as
+unverified instead of treating the Claude CLI environment as proof.
 
 Claude Desktop displays exact context usage in its native UI, but its observed
 stable plugin hook payload and aggregate cache do not expose that percentage.

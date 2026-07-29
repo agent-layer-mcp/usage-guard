@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0 - 2026-07-30
+
+- Restore Claude `PreToolUse` enforcement with the documented permission
+  decision schema so an active run can be visibly challenged in `PROTECT` and
+  stopped at the protected reserve.
+- Add `PostToolBatch` as a second circuit breaker before the next model request.
+- Configure Claude's native proactive compaction at 40% by default while
+  preserving and restoring prior environment settings.
+- Save Claude's supported `PostCompact` summary in a private project-keyed
+  handoff and inject it into a different recent local session through
+  `SessionStart`; raw transcripts are never read.
+- Stop treating `ANTHROPIC_BASE_URL` in `settings.json` as proof of Claude
+  Desktop routing. Document and diagnose Desktop's separate Third-Party
+  Inference requirement.
+- Stop relying on Claude Desktop to visibly render `Stop` hook
+  `systemMessage`; retain it as best-effort status while enforcing at supported
+  prompt and tool boundaries.
+- Notify again when a newly pressured quota window becomes controlling even if
+  the provider's overall severity remains unchanged.
+
 ## 0.3.1 - 2026-07-27
 
 - Keep Claude `Stop` hook output visible so Claude Desktop renders the compact

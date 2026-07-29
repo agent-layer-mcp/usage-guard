@@ -24,6 +24,8 @@ const SCREENSHOT_MEMORY_LABEL = "sh.agentlayer.usage-guard.screenshot-memory";
 const SCREENSHOT_MEMORY_PORT = 47_822;
 const SCREENSHOT_MEMORY_URL = `http://127.0.0.1:${SCREENSHOT_MEMORY_PORT}`;
 const ANTHROPIC_API_URL = "https://api.anthropic.com";
+export const DEFAULT_AUTO_COMPACT_PERCENT = 40;
+export const AUTO_COMPACT_WINDOW = 1_000_000;
 
 export function installIntegrations(options = {}) {
   const home = options.homeDir || os.homedir();
@@ -66,7 +68,10 @@ export function installIntegrations(options = {}) {
     claudeSettingsPath,
     stateHome,
     runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
-    record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
+    {
+      screenshotMemoryUrl: record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
+      autoCompactPercent: options.autoCompactPercent,
+    },
   );
   if (
     configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
@@ -75,6 +80,7 @@ export function installIntegrations(options = {}) {
   ) {
     record.claude.previousBaseUrl = existingRecord.claude.previousBaseUrl;
   }
+  preservePreviousClaudeEnvironment(record.claude, existingRecord.claude);
   record.notifier = configureNativeNotifier({
     packageRoot,
     stateHome,
@@ -123,8 +129,15 @@ export function configureClaude(
   settingsPath,
   stateHome,
   command = "usage-guard statusline claude",
-  screenshotMemoryUrl = null,
+  options = {},
 ) {
+  const normalizedOptions = typeof options === "string"
+    ? { screenshotMemoryUrl: options }
+    : options;
+  const screenshotMemoryUrl = normalizedOptions.screenshotMemoryUrl || null;
+  const autoCompactPercent = normalizeAutoCompactPercent(
+    normalizedOptions.autoCompactPercent,
+  );
   mkdirSync(path.dirname(settingsPath), { recursive: true });
   backupFile(settingsPath, stateHome, "claude-settings.json");
   const settings = readJsonFile(settingsPath, {});
@@ -132,16 +145,41 @@ export function configureClaude(
   const previousBaseUrl = Object.hasOwn(settings.env || {}, "ANTHROPIC_BASE_URL")
     ? settings.env.ANTHROPIC_BASE_URL
     : null;
+  const previousAutoCompactWindow = Object.hasOwn(
+    settings.env || {},
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+  )
+    ? settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    : null;
+  const previousAutoCompactPercent = Object.hasOwn(
+    settings.env || {},
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+  )
+    ? settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+    : null;
   settings.statusLine = {
     type: "command",
     command,
     padding: 0,
   };
+  settings.env = {
+    ...(settings.env || {}),
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(AUTO_COMPACT_WINDOW),
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(autoCompactPercent),
+  };
   if (screenshotMemoryUrl) {
     settings.env = { ...(settings.env || {}), ANTHROPIC_BASE_URL: screenshotMemoryUrl };
   }
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-  return { path: settingsPath, previous, previousBaseUrl };
+  return {
+    path: settingsPath,
+    previous,
+    previousBaseUrl,
+    previousAutoCompactWindow,
+    previousAutoCompactPercent,
+    autoCompactWindow: AUTO_COMPACT_WINDOW,
+    autoCompactPercent,
+  };
 }
 
 export function configureScreenshotMemoryProxy(options = {}) {
@@ -215,6 +253,11 @@ export function inspectConfiguredIntegrations(options = {}) {
     : null;
   const settings = readJsonFile(settingsPath, {});
   const claudeCommand = settings.statusLine?.command || null;
+  const autoCompactReady = (
+    settings.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW === String(AUTO_COMPACT_WINDOW)
+    && settings.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
+      === String(record.claude?.autoCompactPercent || DEFAULT_AUTO_COMPACT_PERCENT)
+  );
   const codexConfig = existsSync(configPath) && readFileSync(configPath, "utf8").trim()
     ? parse(readFileSync(configPath, "utf8"))
     : {};
@@ -282,6 +325,13 @@ export function inspectConfiguredIntegrations(options = {}) {
         : claudeCommand || "not configured",
     },
     {
+      label: "Claude early compact",
+      ok: autoCompactReady,
+      detail: autoCompactReady
+        ? `${settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}% of the active model context window`
+        : "rerun `usage-guard install` to enable native early compaction",
+    },
+    {
       label: "Codex app-server",
       ok: Boolean(providers.codex && path.isAbsolute(providers.codex) && existsSync(providers.codex)),
       detail: providers.codex || "rerun `usage-guard install` to record the Codex CLI path",
@@ -315,8 +365,15 @@ export function inspectConfiguredIntegrations(options = {}) {
       detail: platform !== "darwin"
         ? "manual proxy mode available on this platform"
         : screenshotMemoryReady
-          ? `${record.screenshotMemory.retentionTurns} user-turn visual tail; local gateway active`
+          ? `${record.screenshotMemory.retentionTurns} user-turn visual tail; local gateway and Claude CLI route installed`
           : "rerun `usage-guard install` to enable the local image-expiry gateway",
+    },
+    {
+      label: "Claude Desktop gateway",
+      ok: platform !== "darwin",
+      detail: platform !== "darwin"
+        ? "not applicable on this platform"
+        : "not inferred from settings.json; normal subscriber sessions remain direct, credentialed gateways require separate verification",
     },
   ];
 }
@@ -456,7 +513,42 @@ function restoreClaude(record) {
       ANTHROPIC_BASE_URL: record.previousBaseUrl,
     };
   }
+  restoreEnvironmentValue(
+    settings,
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    record.previousAutoCompactWindow,
+  );
+  restoreEnvironmentValue(
+    settings,
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+    record.previousAutoCompactPercent,
+  );
   writeFileSync(record.path, `${JSON.stringify(settings, null, 2)}\n`);
+}
+
+function preservePreviousClaudeEnvironment(current, previous) {
+  if (!current || !previous) return;
+  if (
+    current.previousAutoCompactWindow === String(AUTO_COMPACT_WINDOW)
+    && Object.hasOwn(previous, "previousAutoCompactWindow")
+  ) {
+    current.previousAutoCompactWindow = previous.previousAutoCompactWindow;
+  }
+  if (
+    current.previousAutoCompactPercent === String(current.autoCompactPercent)
+    && Object.hasOwn(previous, "previousAutoCompactPercent")
+  ) {
+    current.previousAutoCompactPercent = previous.previousAutoCompactPercent;
+  }
+}
+
+function restoreEnvironmentValue(settings, key, previousValue) {
+  if (previousValue == null) {
+    if (settings.env) delete settings.env[key];
+  } else {
+    settings.env = { ...(settings.env || {}), [key]: previousValue };
+  }
+  if (settings.env && !Object.keys(settings.env).length) delete settings.env;
 }
 
 function restoreCodex(record) {
@@ -687,6 +779,12 @@ function normalizeRetentionTurns(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number < 1) return 5;
   return Math.min(50, Math.round(number));
+}
+
+function normalizeAutoCompactPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return DEFAULT_AUTO_COMPACT_PERCENT;
+  return Math.max(1, Math.min(100, Math.round(number)));
 }
 
 function escapeXml(value) {

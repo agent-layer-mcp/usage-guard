@@ -37,6 +37,7 @@ const TOOLS = [
         weeklyReservePercent: { type: "number", minimum: 0, maximum: 30 },
         contextWatchPercent: { type: "number", minimum: 1, maximum: 99 },
         contextProtectPercent: { type: "number", minimum: 1, maximum: 100 },
+        compactionHandoffEnabled: { type: "boolean" },
       },
       additionalProperties: false,
     },

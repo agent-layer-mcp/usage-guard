@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../src/config.mjs";
+import { clearCompactionHandoffs } from "../src/compaction-handoff.mjs";
 import { startDashboard } from "../src/dashboard.mjs";
 import { runProviderHook } from "../src/hooks.mjs";
 import {
@@ -173,6 +174,7 @@ try {
         claude: resolveExecutablePath("claude"),
         codex: resolveExecutablePath("codex"),
       },
+      autoCompactPercent: numberOption(args, "--auto-compact-percent"),
     });
     console.log(`Usage Guard installed for Claude Code and Codex.\nBackup and rollback record: ${record.installedAt}`);
     store.close();
@@ -189,7 +191,8 @@ try {
     store.close();
   } else if (command === "reset") {
     store.clear();
-    console.log("Usage Guard quota history and decisions cleared.");
+    clearCompactionHandoffs();
+    console.log("Usage Guard quota history, decisions, and local compaction handoffs cleared.");
     store.close();
   } else {
     throw new Error(`Unknown command: ${command}\n\n${helpText()}`);
@@ -287,7 +290,8 @@ async function runDoctor() {
   });
   for (const check of checks) console.log(`${check.ok ? "PASS" : "WAIT"}  ${check.label.padEnd(18)} ${check.detail}`);
   console.log(
-    "\nUsage Guard stores no prompts, screenshots, transcripts, credentials, or source code. "
+    "\nUsage Guard stores no raw prompts, screenshots, transcripts, credentials, or source code. "
+    + "When enabled, it stores Claude's compact summary only in a private local handoff. "
     + "Screenshot Memory transiently transforms eligible Claude requests on localhost.",
   );
 }
@@ -387,7 +391,8 @@ Commands:
   sync [claude|codex|all]       Refresh supported provider-local usage meters
   serve [--port 4765]           Run the local dashboard
   config [key value]            Read or change local policy
-  install                       Install both plugins and status-line settings
+  install [--auto-compact-percent 40]
+                                Install plugins, guards, and early compaction
   uninstall                     Remove integrations and restore prior settings
   doctor                        Verify providers, meters, and privacy boundary
   demo                          Load local example readings

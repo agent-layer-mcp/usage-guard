@@ -93,6 +93,10 @@ usage-guard install --auto-compact-percent 50
 
 The installer records and restores the user's prior values exactly.
 
+The current machine has a deliberate local override of 20%, set on 2026-07-30.
+With the 1,000,000-token calculation window, Claude will therefore compact at
+approximately 200,000 tokens. The packaged default remains 40%.
+
 ### Durable compaction handoff
 
 After a manual or automatic compaction, `PostCompact` stores Claude's supplied
@@ -144,7 +148,7 @@ Installed on 2026-07-30:
 Usage Guard source:       0.4.0
 Claude CLI:               2.1.220
 Codex CLI:                0.146.0
-Native early compact:     40%
+Native early compact:     20% local override
 Auto-compact window:      1,000,000
 Claude plugin:            installed and enabled
 Codex plugin:             installed and enabled
@@ -159,8 +163,8 @@ The installed status-line command and hook bootstrap use absolute Node and
 Usage Guard paths, so they do not depend on a GUI process inheriting Terminal's
 `PATH`.
 
-A direct native notification smoke test exited successfully after installation
-with the message:
+A direct native notification smoke test exited successfully after the initial
+40% installation with the message:
 
 ```text
 Early compaction is active at 40%. Claude is currently WATCH:

@@ -93,9 +93,11 @@ usage-guard install --auto-compact-percent 50
 
 The installer records and restores the user's prior values exactly.
 
-The current machine has a deliberate local override of 20%, set on 2026-07-30.
+The current machine has a deliberate local override of 35%, set on 2026-08-22.
 With the 1,000,000-token calculation window, Claude will therefore compact at
-approximately 200,000 tokens. The packaged default remains 40%.
+approximately 350,000 tokens. The earlier 20% override caused a compaction loop
+because tool-heavy sessions remained around 206,000 tokens immediately after
+compaction. The packaged default remains 40%.
 
 ### Durable compaction handoff
 
@@ -148,7 +150,7 @@ Installed on 2026-07-30:
 Usage Guard source:       0.4.0
 Claude CLI:               2.1.220
 Codex CLI:                0.146.0
-Native early compact:     20% local override
+Native early compact:     35% local override
 Auto-compact window:      1,000,000
 Claude plugin:            installed and enabled
 Codex plugin:             installed and enabled

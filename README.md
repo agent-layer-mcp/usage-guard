@@ -26,8 +26,8 @@ reserve. Every recommendation has a visible reason.
 - Recommends separate model/effort settings for the main thread and routine
   subagents, with recovery hysteresis and optional quiet hours.
 - Offers an optional quality lock to retain the previous model-preserving behavior.
-- Blocks new prompts and tool calls at the reserve, saves a quota-only handover,
-  and explains when work can resume.
+- Blocks new prompts and tool calls at the reserve and explains when work can
+  resume. With model stepping active, it also saves a quota-only handover.
 - Rechecks quota before Claude tool calls and after tool batches so an active
   desktop run can stop before another expensive model request.
 - Uses Claude's native compaction at 40% by default and saves the provider's
@@ -188,7 +188,7 @@ the new default once; explicitly re-enabling the lock thereafter persists.
 | `safe` | Work normally; avoid duplicate context. |
 | `watch` | Reuse evidence, compact at safe boundaries, and bound parallel work. |
 | `protect` | Use one active path, preserve strong planning/review, and stop speculative branches. |
-| `queue` | Pause new prompts and tool calls at the reserve; save a quota-only handover. |
+| `queue` | Pause new prompts and tool calls at the reserve; save a quota-only handover when model stepping is active. |
 | `missing` / `stale` | Refresh the meter; never block from uncertain data. |
 
 Default reserves are 8% for windows up to six hours and 5% for longer windows. Change them locally with `usage-guard config`.
@@ -205,19 +205,25 @@ Usage Guard configures Claude's documented
 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and
 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` variables. The default is 40%. Claude still
 performs the compaction itself with the active session's summarization
-machinery; Usage Guard does not create a replacement summary or lower the
-model.
+machinery. Usage Guard does not create a replacement summary; resumed work
+follows the current model and effort policy.
 
 After compaction, the supported `PostCompact` hook receives Claude's compact
-summary. Usage Guard stores that summary below
+summary. By default, Usage Guard stores that summary below
 `~/.usage-guard/handoffs/<project-key>/context-handoff.md` with user-only
 permissions. A different fresh local session for the same Git repository
 receives the recent handoff through its supported `SessionStart` context. The
-raw transcript is never read or copied. Disable this behavior with:
+summary is not redacted or filtered and may contain prompt and response text,
+source code, diffs, pasted secrets, or other sensitive content. Usage Guard does
+not read or copy the raw transcript to create it. Disable future saving and
+injection with:
 
 ```bash
 usage-guard config compactionHandoffEnabled false
 ```
+
+This does not delete an existing handoff file; `usage-guard reset` removes saved
+handoffs along with quota history and other local state.
 
 Claude Desktop does not expose an official way for a plugin to silently create
 and submit a new Code session. Its deep link can only prefill a composer and
@@ -391,15 +397,15 @@ that run are unaffected.
 
 ## Privacy
 
-Usage Guard is local-only by default. It does not store:
-
-- raw prompts or transcript bodies (the optional provider-supplied compact
-  summary handoff described above can contain conversation facts)
-- screenshots or other image payloads
-- source code or diffs
-- cookies, OAuth tokens, or provider auth files
-- API keys
-- browsing activity
+Usage Guard is local-only by default. Its quota governance and model-step
+records do not store prompt text, source code, diffs, or transcript bodies.
+The separate provider-supplied compact-summary handoff is enabled by default
+and is saved locally without redaction or filtering; it may contain exact
+prompt or response text, code, diffs, pasted credentials, and other sensitive
+content. Usage Guard does not read or copy the raw transcript to produce that
+handoff. Screenshot Memory inspects image payloads in memory but does not save
+them; it forwards authorization headers without persisting them. Quota
+governance does not directly read browser sessions or provider auth files.
 
 It stores normalized quota observations, model/effort labels supplied by
 lifecycle payloads, local session identifiers, aggregate context percentage,
@@ -407,8 +413,10 @@ policy decisions, model-step history, and local configuration in
 `~/.usage-guard/usage-guard.sqlite3`.
 
 Reserve handovers contain only quota/model metadata, never the task text,
-prompts, source code, or tool arguments. The hook saves them locally before
-stopping; the existing optional compact-summary handoff remains separate.
+prompts, source code, or tool arguments. With model stepping active
+(`modelStepping: true` and `qualityLock: false`), the hook saves one locally
+before stopping. This does not happen under the legacy quality lock. The
+compact-summary handoff is separate and enabled by default.
 
 On macOS its hook and one-minute background monitor may read Claude Desktop's
 local aggregate plan history at

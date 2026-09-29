@@ -16,6 +16,12 @@ import { guardHome } from "./config.mjs";
 const MAX_SUMMARY_CHARACTERS = 40_000;
 const MAX_CONTEXT_CHARACTERS = 48_000;
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+const CONTINUATION_GUIDANCE = "Treat this handoff as continuity context, not a model-policy override. "
+  + "Follow the current Usage Guard instructions and configuration for model, effort, and reserve pauses. "
+  + "Treat the user's newest request and the current repository state as authoritative.";
+const LEGACY_CONTINUATION_FOOTER = "## Continuation\n\n"
+  + "Continue from this handoff without lowering the selected model or reasoning effort. "
+  + "Treat the user's newest request and the current repository state as authoritative.\n";
 
 export function writeCompactionHandoff(input, options = {}) {
   const summary = normalizeSummary(input?.compact_summary || input?.compactSummary);
@@ -43,8 +49,7 @@ export function writeCompactionHandoff(input, options = {}) {
     "",
     "## Continuation",
     "",
-    "Continue from this handoff without lowering the selected model or reasoning effort. "
-      + "Treat the user's newest request and the current repository state as authoritative.",
+    CONTINUATION_GUIDANCE,
     "",
   ].join("\n");
 
@@ -92,12 +97,20 @@ export function readCompactionHandoff(input, options = {}) {
       path: filePath,
       modifiedAt,
       sourceSessionId,
-      content: compactForHookContext(content),
+      content: compactForHookContext(currentContinuation(content)),
     };
   } catch {
     // Continuity is helpful, but an unreadable handoff must never break startup.
     return null;
   }
+}
+
+function currentContinuation(content) {
+  // Older installations already saved this fixed-lock footer. Replace only
+  // our exact trailing boilerplate, never matching text inside Claude's summary.
+  if (!content.endsWith(LEGACY_CONTINUATION_FOOTER)) return content;
+  return content.slice(0, -LEGACY_CONTINUATION_FOOTER.length)
+    + `## Continuation\n\n${CONTINUATION_GUIDANCE}\n`;
 }
 
 export function compactionHandoffPath(cwd, options = {}) {

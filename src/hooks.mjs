@@ -61,7 +61,7 @@ export async function runProviderHook(store, provider, input, options = {}) {
           usageContext(decision),
           handoff
             ? `A recent Usage Guard compaction handoff from another local session follows. `
-              + `Use it as continuity context; the user's newest request and current repository state override it.\n\n`
+              + `Use it as continuity context; the user's newest request, current Usage Guard policy, and current repository state override it.\n\n`
               + handoff.content
             : null,
         ].filter(Boolean).join("\n\n"),

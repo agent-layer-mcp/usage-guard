@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "usage-guard",
-      "description": "Protect Claude Code and Codex quota without silently reducing model quality.",
+      "description": "Protect Claude Code and Codex quota with visible model stepping and optional quality lock.",
       "author": {
         "name": "Agent Layer"
       },

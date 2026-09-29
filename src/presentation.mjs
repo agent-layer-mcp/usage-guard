@@ -23,7 +23,22 @@ export function formatStatusLine(decision, options = {}) {
   const reset = decision.resetAt
     ? ` | ${formatDuration(Math.max(0, (decision.resetAt - Date.now()) / 60_000))}`
     : "";
-  const base = `UG ${windows || "waiting for meter"}${context} | ${state}${reset} | quality locked`;
+  if (decision.modelStepping === true) {
+    const main = modelLabel(decision.recommendedModel, decision.recommendedEffort);
+    const routine = modelLabel(decision.routineModel, decision.routineEffort);
+    const suffix = ` | main ${main} | routine ${routine}`;
+    if (!color) return `UG ${windows || "waiting for meter"}${context} | ${state}${reset}${suffix}`;
+    const stateColor = decision.state === "safe"
+      ? ANSI.green
+      : decision.state === "watch" || decision.state === "stale"
+        ? ANSI.amber
+        : decision.state === "missing"
+          ? ANSI.muted
+          : ANSI.red;
+    return `${ANSI.bold}UG${ANSI.reset} ${windows || "waiting for meter"}${context} | ${stateColor}${state}${ANSI.reset}${reset}${suffix}`;
+  }
+  const modeLabel = decision.qualityLocked === false ? "model stepping off" : "quality locked";
+  const base = `UG ${windows || "waiting for meter"}${context} | ${state}${reset} | ${modeLabel}`;
   if (!color) return base;
   const stateColor = decision.state === "safe"
     ? ANSI.green
@@ -32,15 +47,21 @@ export function formatStatusLine(decision, options = {}) {
       : decision.state === "missing"
         ? ANSI.muted
         : ANSI.red;
-  return `${ANSI.bold}UG${ANSI.reset} ${windows || "waiting for meter"}${context} | ${stateColor}${state}${ANSI.reset}${reset} | ${ANSI.muted}quality locked${ANSI.reset}`;
+  return `${ANSI.bold}UG${ANSI.reset} ${windows || "waiting for meter"}${context} | ${stateColor}${state}${ANSI.reset}${reset} | ${ANSI.muted}${modeLabel}${ANSI.reset}`;
 }
 
 export function formatStatusText(status) {
+  const stepping = status.config.modelStepping && !status.config.qualityLock;
   const output = [
     "Usage Guard",
-    `Mode: ${status.config.enforcement} | Quality lock: ${status.config.qualityLock ? "on" : "off"}`,
+    stepping
+      ? `Mode: ${status.config.enforcement} | Model stepping: on | Quality lock: off`
+      : `Mode: ${status.config.enforcement} | Quality lock: ${status.config.qualityLock ? "on" : "off"}`,
     "",
   ];
+  if (stepping && status.overnightSummary) {
+    output.push(`Overnight: ${status.overnightSummary}`, "");
+  }
   for (const provider of status.providers) {
     output.push(`${providerName(provider.provider)}  ${provider.state.toUpperCase()}`);
     for (const window of provider.windows) {
@@ -54,6 +75,11 @@ export function formatStatusText(status) {
     }
     output.push(`  Choice: ${provider.action}`);
     output.push(`  Why: ${provider.reason}`);
+    if (provider.modelStepping === true) {
+      output.push(`  Main thread: ${modelLabel(provider.recommendedModel, provider.recommendedEffort)}`);
+      output.push(`  Routine subagents: ${modelLabel(provider.routineModel, provider.routineEffort)}`);
+      output.push(`  Model reason: ${provider.modelReason}`);
+    }
     output.push("");
   }
   const request = status.diagnostics?.claudeRequest;
@@ -99,6 +125,10 @@ export function formatStatusText(status) {
       : "Local only: no prompts, source code, credentials, or telemetry stored.",
   );
   return output.join("\n");
+}
+
+function modelLabel(model, effort) {
+  return model ? `${model} (${effort || "default"})` : "waiting for fresh quota";
 }
 
 function formatBytes(value) {

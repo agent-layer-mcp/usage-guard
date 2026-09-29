@@ -1,21 +1,32 @@
 import readline from "node:readline";
-import { VERSION } from "./config.mjs";
+import { CONFIG_SCHEMA, VERSION } from "./config.mjs";
 import { completeStatus, providerDecision, syncCodex } from "./service.mjs";
 
 const TOOLS = [
   {
     name: "usage_guard_status",
-    description: "Read local Claude Code and Codex quota windows, forecasts, and deliberate pacing choices.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    description: "Read local quota windows, model recommendations, overnight steps, and pacing choices.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", enum: ["claude", "codex"] },
+        role: { type: "string", enum: ["planning", "architecture", "review", "sensitive", "routine", "standard"] },
+        task: { type: "string", description: "Optional task description classified in memory; never stored." },
+        sessionId: { type: "string", description: "Optional current session identifier for context readings." },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: "usage_guard_decision",
-    description: "Get a quality-preserving pacing decision for a provider and task. Prompt text is classified in memory and never stored.",
+    description: "Get a quota pacing and role-aware model recommendation for a provider and task. Task text is classified in memory and never stored.",
     inputSchema: {
       type: "object",
       properties: {
         provider: { type: "string", enum: ["claude", "codex"] },
         task: { type: "string", description: "Optional task description used only for transient classification." },
+        role: { type: "string", enum: ["planning", "architecture", "review", "sensitive", "routine", "standard"] },
+        sessionId: { type: "string" },
       },
       required: ["provider"],
       additionalProperties: false,
@@ -28,19 +39,8 @@ const TOOLS = [
   },
   {
     name: "usage_guard_configure",
-    description: "Change local reserve percentages or enforcement mode without changing model quality.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        enforcement: { type: "string", enum: ["observe", "protect"] },
-        fiveHourReservePercent: { type: "number", minimum: 0, maximum: 30 },
-        weeklyReservePercent: { type: "number", minimum: 0, maximum: 30 },
-        contextWatchPercent: { type: "number", minimum: 1, maximum: 99 },
-        contextProtectPercent: { type: "number", minimum: 1, maximum: 100 },
-        compactionHandoffEnabled: { type: "boolean" },
-      },
-      additionalProperties: false,
-    },
+    description: "Change any local Usage Guard setting, including model ladders, thresholds, quiet hours, reserves, and quality lock.",
+    inputSchema: CONFIG_SCHEMA,
   },
 ];
 
@@ -77,7 +77,9 @@ export async function handleRequest(store, request) {
       protocolVersion: request.params?.protocolVersion || "2025-06-18",
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: "usage-guard", version: VERSION },
-      instructions: "Use Usage Guard to preserve quota without silently lowering model quality.",
+      instructions: store.getConfig().modelStepping && !store.getConfig().qualityLock
+        ? "Use Usage Guard model recommendations at task boundaries. Switch the current session model when supported; otherwise use recommended-model subagents. Never switch mid-edit."
+        : "Use Usage Guard to preserve quota without silently lowering model quality.",
     };
   }
   if (request.method === "ping") return {};
@@ -89,9 +91,20 @@ export async function handleRequest(store, request) {
 async function callTool(store, params) {
   const args = params.arguments || {};
   let value;
-  if (params.name === "usage_guard_status") value = completeStatus(store);
+  if (params.name === "usage_guard_status") {
+    value = completeStatus(store, {
+      providers: args.provider ? [args.provider] : undefined,
+      role: args.role,
+      prompt: args.task || "",
+      sessionId: args.sessionId,
+    });
+  }
   else if (params.name === "usage_guard_decision") {
-    value = providerDecision(store, args.provider, { prompt: args.task || "" });
+    value = providerDecision(store, args.provider, {
+      prompt: args.task || "",
+      role: args.role,
+      sessionId: args.sessionId,
+    });
   } else if (params.name === "usage_guard_sync_codex") {
     await syncCodex(store);
     value = providerDecision(store, "codex");

@@ -46,6 +46,13 @@ install or configure pxpipe and does not send this metadata to Agent Layer.
 
 Prompt text may be inspected transiently by a deterministic task classifier so Usage Guard can distinguish quality-sensitive work from mechanical work. Prompt text is never written to the database, logs, decisions, or network.
 
+Model stepping stores only the resulting role label, quota figures, window
+reset/observation times, chosen model and effort, rung, and transition time.
+Hysteresis state and the overnight summary use those same fields. They do not
+store the task description, prompts, tool inputs, source code, or conversation
+summaries. Model-step records describe recommendations, not confirmed host
+switches. User-configured quiet hours and their time zone are stored locally.
+
 When compaction handoffs are enabled, Claude's supported `PostCompact` hook
 supplies the compact summary that Claude already generated. Usage Guard writes
 that summary to a private local handoff file keyed by the repository's Git
@@ -89,6 +96,7 @@ data is numeric operational status:
 
 Normalized quota observations, per-session aggregate context observations, and
 decisions are stored in SQLite at `~/.usage-guard/usage-guard.sqlite3`.
+Model-step history and recovery state are stored in that same local database.
 Installation backups, absolute local runtime paths, and the rollback record are
 stored below `~/.usage-guard/` with user-only directory permissions where the
 operating system supports them.
@@ -96,14 +104,21 @@ operating system supports them.
 Screenshot Memory stores its numeric status at
 `~/.usage-guard/screenshot-memory-status.json` with user-only permissions.
 
+Reserve hooks write a quota-only handover to
+`~/.usage-guard/handoffs/quota-<provider>.json` with mode `0600`. Its allowlisted
+fields are provider, time, quota percentages, model/effort, and reset. It never
+includes the triggering task, session identifier, tool arguments, or code. This
+file is separate from the optional compact-summary handoff below.
+
 Claude compact summaries are stored at
 `~/.usage-guard/handoffs/<project-key>/context-handoff.md` with user-only
 permissions when compaction handoffs are enabled. They are not stored in the
 Usage Guard database or sent to Agent Layer. A handoff is no longer injected
 after seven days and is deleted when encountered after that retention period.
 
-Use `usage-guard reset` to delete quota observations, decisions, local alert or
-notice state, and compaction handoffs. Use `usage-guard uninstall` to remove provider integrations, unload the
+Use `usage-guard reset` to delete quota observations, decisions, model-step
+history, recovery state, local alert/notice state, and both kinds of handover.
+Use `usage-guard uninstall` to remove provider integrations, unload the
 macOS background monitor, and restore prior settings.
 
 ## Network behavior

@@ -45,6 +45,14 @@ universal stop result at the protected reserve. `PostToolBatch` independently
 stops the loop before the next model request. Missing or stale quota data still
 fails open.
 
+Model stepping is on by default; an explicit quality lock overrides it.
+Recommendations apply only between tasks and use the host's exposed session
+control or explicit subagent model/effort parameters. Usage Guard does not
+rewrite prompts, source files, or a running model's requests to force a switch.
+Protected roles never go below rung 2. Stepped-down rungs reject max/xhigh
+effort. A fresh window at its reserve still blocks work even when a different
+window is stale, and delegation cannot bypass the stop.
+
 The `PostCompact` hook stores only Claude's supplied compact summary, never the
 raw JSONL transcript. Handoffs live below the user-only Usage Guard state
 directory, are keyed by a hash of the repository identity, are written

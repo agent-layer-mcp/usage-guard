@@ -15,7 +15,9 @@ export function ingestClaudeStatus(store, input, now = Date.now()) {
 export async function syncCodex(store, options = {}) {
   const snapshot = await fetchCodexSnapshot(options);
   if (!snapshot.windows.length) throw new Error("Codex returned no rate-limit windows.");
-  store.saveSnapshot(snapshot);
+  // This response enumerates currently exposed buckets. Keep historical rows
+  // for burn analysis, but do not present retired Spark-era buckets as live.
+  store.saveSnapshot({ ...snapshot, authoritativeWindows: true });
   return snapshot;
 }
 

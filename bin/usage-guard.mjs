@@ -15,6 +15,7 @@ import {
 import { runMcpServer } from "../src/mcp.mjs";
 import { runMonitorCycle } from "../src/monitor.mjs";
 import { formatStatusLine, formatStatusText } from "../src/presentation.mjs";
+import { clearQuotaHandovers } from "../src/quota-handover.mjs";
 import {
   readScreenshotMemoryStatus,
   startScreenshotMemoryProxy,
@@ -192,7 +193,8 @@ try {
   } else if (command === "reset") {
     store.clear();
     clearCompactionHandoffs();
-    console.log("Usage Guard quota history, decisions, and local compaction handoffs cleared.");
+    clearQuotaHandovers(store);
+    console.log("Usage Guard quota history, decisions, and local handoffs cleared.");
     store.close();
   } else {
     throw new Error(`Unknown command: ${command}\n\n${helpText()}`);
@@ -259,17 +261,25 @@ function numberOption(values, name) {
 function parseScalar(value) {
   if (value === "true") return true;
   if (value === "false") return false;
+  if (value === "null") return null;
+  if (value.startsWith("{") || value.startsWith("[")) return JSON.parse(value);
   const number = Number(value);
   return Number.isFinite(number) && value.trim() !== "" ? number : value;
 }
 
 async function runDoctor() {
   const claudeDesktopSnapshot = bestEffortClaudeDesktopSync();
+  const config = store.getConfig();
+  const stepping = config.modelStepping && !config.qualityLock;
+  const claudeCommand = commandCheck("claude", ["--version"]);
   const checks = [
-    commandCheck("claude", ["--version"]),
+    claudeCommand,
     commandCheck("codex", ["--version"]),
     { label: "Local database", ok: true, detail: store.filename },
-    { label: "Quality lock", ok: store.getConfig().qualityLock, detail: store.getConfig().qualityLock ? "enabled" : "disabled" },
+    stepping
+      ? { label: "Model stepping", ok: true, detail: "enabled; recommendations apply between tasks" }
+      : { label: "Quality lock", ok: config.qualityLock, detail: config.qualityLock ? "enabled" : "disabled" },
+    ...(stepping ? [claudeLadderCompatibility(claudeCommand)] : []),
     ...inspectConfiguredIntegrations(),
     pluginCheck("claude", ["plugin", "list", "--json"], "usage-guard@agent-layer"),
     pluginCheck("codex", ["plugin", "list", "--json"], "usage-guard@agent-layer"),
@@ -294,6 +304,25 @@ async function runDoctor() {
     + "When enabled, it stores Claude's compact summary only in a private local handoff. "
     + "Screenshot Memory transiently transforms eligible Claude requests on localhost.",
   );
+}
+
+function claudeLadderCompatibility(claudeCommand) {
+  if (!claudeCommand.ok) {
+    return { label: "Claude ladder", ok: false, detail: "Claude CLI unavailable; install or update to 2.1.284+ before using Opus 5.5 or Sonnet 5.5" };
+  }
+  const match = claudeCommand.detail.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
+  if (!match) {
+    return { label: "Claude ladder", ok: false, detail: "CLI version unknown; verify Claude Code 2.1.284+ for Opus 5.5 and Sonnet 5.5" };
+  }
+  const [, major, minor, patch] = match.map(Number);
+  const compatible = major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 284)));
+  return {
+    label: "Claude ladder",
+    ok: compatible,
+    detail: compatible
+      ? `Claude CLI ${match[0]} supports the default Opus 5.5/Sonnet 5.5 ladder`
+      : `Claude CLI ${match[0]} is older than 2.1.284; update Claude Code before selecting Opus 5.5 or Sonnet 5.5`,
+  };
 }
 
 function claudeDesktopCacheCheck(snapshot) {
@@ -384,13 +413,13 @@ function seedDemo(target) {
 function helpText() {
   return `Usage Guard ${VERSION}
 
-Quality-preserving quota governance for Claude Code and Codex.
+Quota-aware model recommendations for Claude Code and Codex.
 
 Commands:
   status [--json] [--no-sync]  Show windows, pace, and deliberate choices
   sync [claude|codex|all]       Refresh supported provider-local usage meters
   serve [--port 4765]           Run the local dashboard
-  config [key value]            Read or change local policy
+  config [key value]            Read or change local policy (JSON for arrays/objects)
   install [--auto-compact-percent 40]
                                 Install plugins, guards, and early compaction
   uninstall                     Remove integrations and restore prior settings
@@ -406,5 +435,7 @@ Integration commands used by the plugins:
   statusline claude
   hook <claude|codex> [event]
 
-Usage Guard never silently changes model or reasoning quality.`;
+Model stepping is on by default. Usage Guard recommends models at task boundaries;
+the host agent applies a recommendation when its session or subagent controls allow it.
+Set qualityLock=true to restore fixed-quality behavior.`;
 }

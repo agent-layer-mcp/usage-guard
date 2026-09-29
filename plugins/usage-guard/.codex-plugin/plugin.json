@@ -1,7 +1,7 @@
 {
   "name": "usage-guard",
-  "version": "0.4.0",
-  "description": "Protect Claude Code and Codex quota without silently reducing model quality.",
+  "version": "0.5.0",
+  "description": "Protect quota with visible model stepping, strong reviews, and local history.",
   "author": {
     "name": "Agent Layer",
     "url": "https://agentlayer.sh"
@@ -14,16 +14,16 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Usage Guard",
-    "shortDescription": "Protect quota without lowering quality",
-    "longDescription": "Local pacing for the short, weekly, and additional quota windows Codex and Claude expose. Usage Guard trims waste, protects session context, limits speculative concurrency, and queues work at the reserve while preserving the active model and reasoning effort.",
+    "shortDescription": "Quota protection and model stepping",
+    "longDescription": "Local quota pacing with model stepping on by default. Recommend separate models for main-thread and routine work, protect strong planning and reviews, record overnight changes, and pause at the reserve. Optional quality lock preserves your selected model and effort.",
     "developerName": "Agent Layer",
     "category": "Productivity",
-    "capabilities": ["Read local quota status", "Protect session context", "Explain pacing choices"],
+    "capabilities": ["Read local quota status", "Recommend model steps", "Protect session context", "Explain overnight decisions"],
     "websiteURL": "https://agentlayer.sh/usage-limit-monitor",
     "privacyPolicyURL": "https://github.com/agent-layer-mcp/usage-guard/blob/main/PRIVACY.md",
     "defaultPrompt": [
       "Show my current Usage Guard status and explain any intervention.",
-      "Plan this task within my protected quota without lowering quality."
+      "Recommend models for this task and routine subagents within my protected quota."
     ],
     "brandColor": "#C2452D"
   }

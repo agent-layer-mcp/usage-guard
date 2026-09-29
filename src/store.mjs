@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { DEFAULT_CONFIG, databasePath, normalizeConfig } from "./config.mjs";
+import { DEFAULT_CONFIG, databasePath, normalizeConfig, validateConfigPatch } from "./config.mjs";
 
 export class GuardStore {
   constructor(options = {}) {
@@ -31,6 +31,16 @@ export class GuardStore {
       );
       CREATE INDEX IF NOT EXISTS quota_observations_latest
         ON quota_observations(provider, window_key, observed_at DESC);
+
+      CREATE TABLE IF NOT EXISTS provider_snapshots (
+        provider TEXT PRIMARY KEY,
+        observed_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS active_quota_windows (
+        provider TEXT NOT NULL,
+        window_key TEXT NOT NULL,
+        PRIMARY KEY (provider, window_key)
+      );
 
       CREATE TABLE IF NOT EXISTS context_observations (
         provider TEXT NOT NULL,
@@ -78,6 +88,27 @@ export class GuardStore {
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (provider, surface)
       );
+
+      CREATE TABLE IF NOT EXISTS model_stepping_state (
+        provider TEXT PRIMARY KEY,
+        metadata TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS model_steps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        metadata TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS model_steps_recent ON model_steps(created_at DESC);
+    `);
+    // Pre-stepping releases wrote their fixed true default on every config change.
+    // Once upgraded, an explicit qualityLock=true remains authoritative.
+    this.database.exec(`
+      BEGIN IMMEDIATE;
+      UPDATE config SET value = 'false' WHERE key = 'qualityLock'
+        AND NOT EXISTS (SELECT 1 FROM config WHERE key = 'modelStepping');
+      INSERT OR IGNORE INTO config(key, value) VALUES ('modelStepping', 'true');
+      COMMIT;
     `);
   }
 
@@ -110,6 +141,18 @@ export class GuardStore {
           finiteOrNull(snapshot.contextPercent),
           snapshot.source || "unknown",
         );
+      }
+      if (snapshot.authoritativeWindows) {
+        const head = this.database.prepare("SELECT observed_at FROM provider_snapshots WHERE provider = ?").get(snapshot.provider);
+        if (!head || snapshot.observedAt >= head.observed_at) {
+          this.database.prepare("DELETE FROM active_quota_windows WHERE provider = ?").run(snapshot.provider);
+          const activate = this.database.prepare("INSERT OR IGNORE INTO active_quota_windows(provider, window_key) VALUES (?, ?)");
+          for (const window of snapshot.windows) if (Number.isFinite(window.usedPercent)) activate.run(snapshot.provider, window.key);
+          this.database.prepare(`
+            INSERT INTO provider_snapshots(provider, observed_at) VALUES (?, ?)
+            ON CONFLICT(provider) DO UPDATE SET observed_at = excluded.observed_at
+          `).run(snapshot.provider, snapshot.observedAt);
+        }
       }
       this.database.exec("COMMIT");
     } catch (error) {
@@ -157,7 +200,7 @@ export class GuardStore {
   }
 
   latest(provider = null) {
-    const where = provider ? "WHERE q.provider = ?" : "";
+    const where = provider ? "q.provider = ? AND" : "";
     const statement = this.database.prepare(`
       SELECT q.*
       FROM quota_observations q
@@ -169,7 +212,10 @@ export class GuardStore {
       ON latest.provider = q.provider
       AND latest.window_key = q.window_key
       AND latest.observed_at = q.observed_at
-      ${where}
+      WHERE ${where} (
+        NOT EXISTS (SELECT 1 FROM provider_snapshots s WHERE s.provider = q.provider)
+        OR EXISTS (SELECT 1 FROM active_quota_windows a WHERE a.provider = q.provider AND a.window_key = q.window_key)
+      )
       ORDER BY q.provider, COALESCE(q.window_minutes, 999999), q.window_key
     `);
     return (provider ? statement.all(provider) : statement.all()).map(mapObservation);
@@ -229,12 +275,12 @@ export class GuardStore {
     );
   }
 
-  recentDecisions(limit = 12) {
+  recentDecisions(limit = 12, includeModelSteps = false) {
     const statement = this.database.prepare(`
       SELECT provider, state, action, reason, task_class, reset_at, created_at
       FROM decisions ORDER BY created_at DESC LIMIT ?
     `);
-    return statement.all(Math.max(1, Math.min(100, Math.round(limit)))).map((row) => ({
+    const decisions = statement.all(Math.max(1, Math.min(100, Math.round(limit)))).map((row) => ({
       provider: row.provider,
       state: row.state,
       action: row.action,
@@ -243,6 +289,43 @@ export class GuardStore {
       resetAt: numberOrNull(row.reset_at),
       createdAt: Number(row.created_at),
     }));
+    // Keep a dedicated tail of model changes even after a busy night of hooks.
+    return includeModelSteps
+      ? [...decisions, ...this.recentModelSteps(limit)].sort((a, b) => b.createdAt - a.createdAt)
+      : decisions;
+  }
+
+  updateModelStepping(provider, evaluate) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.database.prepare("SELECT metadata FROM model_stepping_state WHERE provider = ?").get(provider);
+      const { state, transition, recommendation } = evaluate(row ? JSON.parse(row.metadata) : null);
+      this.database.prepare(`
+        INSERT INTO model_stepping_state(provider, metadata) VALUES (?, ?)
+        ON CONFLICT(provider) DO UPDATE SET metadata = excluded.metadata
+      `).run(provider, JSON.stringify(state));
+      if (transition) this.database.prepare(`
+        INSERT INTO model_steps(provider, created_at, metadata) VALUES (?, ?, ?)
+      `).run(provider, transition.createdAt, JSON.stringify(transition));
+      this.database.exec("COMMIT");
+      return recommendation;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  recentModelSteps(limit = 10) {
+    return this.database.prepare(`
+      SELECT metadata FROM model_steps ORDER BY created_at DESC, id DESC LIMIT ?
+    `).all(Math.max(1, Math.min(100, Math.round(limit)))).map((row) => JSON.parse(row.metadata));
+  }
+
+  modelStepCounts(since) {
+    return this.database.prepare(`
+      SELECT json_extract(metadata, '$.direction') AS direction, COUNT(*) AS count
+      FROM model_steps WHERE created_at >= ? GROUP BY direction
+    `).all(since);
   }
 
   getAlertState(provider) {
@@ -318,6 +401,7 @@ export class GuardStore {
   }
 
   setConfig(patch) {
+    validateConfigPatch(patch);
     const next = normalizeConfig({ ...this.getConfig(), ...patch });
     const upsert = this.database.prepare(`
       INSERT INTO config(key, value) VALUES (?, ?)
@@ -338,7 +422,7 @@ export class GuardStore {
 
   clear() {
     this.database.exec(
-      "DELETE FROM quota_observations; DELETE FROM context_observations; DELETE FROM decisions; DELETE FROM alert_state; DELETE FROM notice_state;",
+      "DELETE FROM quota_observations; DELETE FROM provider_snapshots; DELETE FROM active_quota_windows; DELETE FROM context_observations; DELETE FROM decisions; DELETE FROM alert_state; DELETE FROM notice_state; DELETE FROM model_stepping_state; DELETE FROM model_steps;",
     );
   }
 

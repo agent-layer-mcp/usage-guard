@@ -1,4 +1,5 @@
 import { formatReset, minutesUntil } from "./time.mjs";
+import { applyModelStepping, overnightSummary } from "./model-stepping.mjs";
 
 const STATE_ORDER = Object.freeze({ missing: -1, stale: 0, safe: 1, watch: 2, protect: 3, queue: 4 });
 
@@ -27,7 +28,7 @@ export function buildProviderDecision(store, provider, options = {}) {
   );
 
   if (!observations.length) {
-    return {
+    return applyModelStepping(store, {
       provider,
       state: "missing",
       action: "connect-meter",
@@ -44,25 +45,35 @@ export function buildProviderDecision(store, provider, options = {}) {
       contextAction: context?.action || "observe",
       instructions: joinInstructions(
         meterInstructions(provider),
-        contextInstructions(context),
+        contextInstructions(context, config),
       ),
-    };
+    }, config, options);
   }
 
   const newest = Math.max(...observations.map((item) => item.observedAt));
-  const stale = now - newest > config.staleAfterMinutes * 60_000;
+  const stale = now - newest > config.staleAfterMinutes * 60_000
+    || (config.modelStepping && !config.qualityLock && observations.some((observation) =>
+      now - observation.observedAt > config.staleAfterMinutes * 60_000
+      || (observation.resetsAt != null && now >= observation.resetsAt)));
   const windows = observations.map((observation) => {
     const since = Math.max(observation.observedAt - 24 * 60 * 60_000, now - 8 * 24 * 60 * 60_000);
     const history = store.history(provider, observation.key, observation.resetsAt, since);
     return evaluateWindow(observation, history, config, now);
   });
 
-  if (stale) {
-    return {
+  const stepping = config.modelStepping && !config.qualityLock;
+  const freshWindows = windows.filter((window) =>
+    now - window.observedAt <= config.staleAfterMinutes * 60_000
+    && (window.resetsAt == null || now < window.resetsAt));
+  // A missing secondary meter cannot cancel a reserve stop proved by a fresh one.
+  if (stale && !(stepping && freshWindows.some((window) => window.state === "queue"))) {
+    return applyModelStepping(store, {
       provider,
       state: "stale",
       action: "refresh-meter",
-      reason: `The latest ${providerLabel(provider)} signal is older than ${config.staleAfterMinutes} minutes.`,
+      reason: config.modelStepping && !config.qualityLock
+        ? `A ${providerLabel(provider)} quota window is stale or has reached its reported reset; refresh the meter.`
+        : `The latest ${providerLabel(provider)} signal is older than ${config.staleAfterMinutes} minutes.`,
       taskClass,
       qualityLocked: config.qualityLock,
       blocked: false,
@@ -75,12 +86,12 @@ export function buildProviderDecision(store, provider, options = {}) {
       contextAction: context?.action || "observe",
       instructions: joinInstructions(
         "Refresh quota before making a pacing decision. Preserve the current model and reasoning setting.",
-        contextInstructions(context),
+        contextInstructions(context, config),
       ),
-    };
+    }, config, options);
   }
 
-  const controlling = [...windows].sort((a, b) => STATE_ORDER[b.state] - STATE_ORDER[a.state])[0];
+  const controlling = [...(stepping ? freshWindows : windows)].sort((a, b) => STATE_ORDER[b.state] - STATE_ORDER[a.state])[0];
   const quotaState = controlling?.state || "safe";
   const contextControls = context
     && !context.stale
@@ -110,11 +121,11 @@ export function buildProviderDecision(store, provider, options = {}) {
     contextAction: context?.action || "observe",
     instructions: joinInstructions(
       instructionsFor(quotaState, taskClass, config, controlling),
-      contextInstructions(context),
+      contextInstructions(context, config),
     ),
   };
   store.recordDecision(decision);
-  return decision;
+  return applyModelStepping(store, decision, config, options);
 }
 
 export function buildStatus(store, options = {}) {
@@ -125,7 +136,9 @@ export function buildStatus(store, options = {}) {
     generatedAt: options.now ?? Date.now(),
     config,
     providers: decisions,
-    recentDecisions: store.recentDecisions(10),
+    recentDecisions: store.recentDecisions(10, config.modelStepping && !config.qualityLock),
+    ...(config.modelStepping && !config.qualityLock
+      ? { overnightSummary: overnightSummary(store, config, options.now ?? Date.now()) } : {}),
     privacy: {
       promptStored: false,
       sourceCodeStored: false,
@@ -287,10 +300,15 @@ function formatMinutes(value) {
 function instructionsFor(state, taskClass, config, window) {
   const quality = config.qualityLock
     ? "Quality lock is on: do not lower the active model or reasoning effort."
-    : "Keep the user's current model choice unless they explicitly approve a change.";
+    : config.modelStepping
+      ? "Model stepping is on: follow the role-specific recommendation for new tasks."
+      : "Keep the user's current model choice unless they explicitly approve a change.";
   const reset = window?.resetsAt ? ` The controlling window ${formatReset(window.resetsAt)}.` : "";
 
   if (state === "queue") {
+    if (config.modelStepping && !config.qualityLock) {
+      return `${quality} Pause new prompts, tool calls and subagents at the protected reserve; save a quota-only handover before stopping.${reset}`;
+    }
     return `${quality} Do not begin quota-heavy work. Preserve the request for the next reset; lightweight local inspection and deterministic checks may continue.${reset}`;
   }
   if (state === "protect") {
@@ -305,10 +323,13 @@ function instructionsFor(state, taskClass, config, window) {
   return `${quality} Work normally; avoid unnecessary duplicate context and speculative parallel agents.${reset}`;
 }
 
-function contextInstructions(context) {
+function contextInstructions(context, config) {
   if (!context || context.stale || context.state === "safe") return "";
   if (context.state === "protect") {
-    return "Context protection: finish the current coherent step, update a durable handoff, then compact or start a fresh task before another large phase. Do not lower the selected model or reasoning effort.";
+    return "Context protection: finish the current coherent step, update a durable handoff, then compact or start a fresh task before another large phase. "
+      + (config.modelStepping && !config.qualityLock
+        ? "Apply model recommendations only at that safe task boundary."
+        : "Do not lower the selected model or reasoning effort.");
   }
   return "Context watch: reuse existing evidence, avoid duplicate file reads, and plan the next compaction at a coherent boundary.";
 }

@@ -13,6 +13,7 @@ test("classifies quality-sensitive work without storing prompt text", () => {
 test("queues new work at the protected reserve without lowering quality", () => {
   const now = Date.UTC(2026, 6, 14);
   const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ qualityLock: true });
   store.saveSnapshot({
     provider: "claude",
     source: "test",

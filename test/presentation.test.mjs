@@ -58,3 +58,27 @@ test("status surfaces fresh local request cost drivers with a quota caveat", () 
   assert.match(text, /Calls to reserve\s+~180/);
   assert.match(text, /compact at next safe boundary/i);
 });
+
+test("stepping status surfaces main and routine models, reason, and overnight summary", () => {
+  const decision = {
+    provider: "codex", state: "watch", action: "trim-context", reason: "Quota approaching threshold.",
+    resetAt: null, windows: [], context: null, modelStepping: true,
+    recommendedModel: "gpt-6-sol", recommendedEffort: "high",
+    routineModel: "gpt-6-luna", routineEffort: "high",
+    modelReason: "5-hour usable 25.0%; main rung 2, routine rung 4.",
+  };
+  const line = formatStatusLine(decision, { color: false });
+  assert.match(line, /main gpt-6-sol \(high\)/);
+  assert.match(line, /routine gpt-6-luna \(high\)/);
+  assert.doesNotMatch(line, /quality locked/i);
+  const text = formatStatusText({
+    config: { enforcement: "protect", qualityLock: false, modelStepping: true, compactionHandoffEnabled: false },
+    providers: [decision],
+    overnightSummary: "Last 12 hours: 2 model recommendations down, 1 up.",
+  });
+  assert.match(text, /Model stepping: on/);
+  assert.match(text, /Main thread: gpt-6-sol \(high\)/);
+  assert.match(text, /Routine subagents: gpt-6-luna \(high\)/);
+  assert.match(text, /Model reason: 5-hour usable 25\.0%/);
+  assert.match(text, /Overnight: Last 12 hours/);
+});

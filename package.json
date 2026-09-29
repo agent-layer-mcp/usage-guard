@@ -1,7 +1,7 @@
 {
   "name": "@agent-layer/usage-guard",
-  "version": "0.4.0",
-  "description": "A local-first, quality-preserving usage governor for Claude Code and Codex.",
+  "version": "0.5.0",
+  "description": "Local quota protection and role-aware model stepping for Claude Code and Codex.",
   "type": "module",
   "bin": {
     "usage-guard": "./bin/usage-guard.mjs"
@@ -17,6 +17,7 @@
     "LICENSE",
     "PRIVACY.md",
     "README.md",
+    "docs/model-stepping.md",
     "SECURITY.md"
   ],
   "scripts": {

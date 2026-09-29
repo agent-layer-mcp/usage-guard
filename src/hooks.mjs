@@ -5,11 +5,17 @@ import {
   readCompactionHandoff,
   writeCompactionHandoff,
 } from "./compaction-handoff.mjs";
+import { writeQuotaHandover } from "./quota-handover.mjs";
 
 export async function runProviderHook(store, provider, input, options = {}) {
   const eventName = input.hook_event_name || input.hookEventName || options.eventName || "UserPromptSubmit";
   const prompt = input.prompt || input.user_prompt || input.userPrompt || "";
   const sessionId = input.session_id || input.sessionId || null;
+  const noticeSurface = `session:${sessionId || "provider"}`;
+  const activeRoleSurface = `${noticeSurface}:current-task-role`;
+  const activeRole = eventName === "UserPromptSubmit"
+    ? input.role
+    : store.getNoticeState(provider, activeRoleSurface)?.state;
 
   if (provider === "codex") {
     try {
@@ -30,16 +36,23 @@ export async function runProviderHook(store, provider, input, options = {}) {
     }
   }
 
-  const decision = providerDecision(store, provider, { prompt, sessionId });
+  const decision = providerDecision(store, provider, { prompt, sessionId, role: activeRole });
   const message = formatStatusLine(decision, { color: false });
-  const noticeSurface = `session:${sessionId || "provider"}`;
   const previous = store.getNoticeState(provider, noticeSurface);
+  const stepping = decision.modelStepping === true;
+  if (stepping && eventName === "UserPromptSubmit") {
+    store.setNoticeState(provider, activeRoleSurface, decision.taskRole);
+  }
+  const stepSurface = `${noticeSurface}:model-recommendation`;
+  const stepSignature = stepping ? recommendationSignature(decision) : null;
+  const previousStep = stepping ? store.getNoticeState(provider, stepSurface) : null;
 
   if (eventName === "SessionStart") {
     const handoff = provider === "claude" && store.getConfig().compactionHandoffEnabled
       ? readCompactionHandoff(input, options.compactionHandoff)
       : null;
     store.setNoticeState(provider, noticeSurface, decision.state);
+    if (stepping) store.setNoticeState(provider, stepSurface, stepSignature);
     return removeUndefined({
       systemMessage: decision.state === "safe" ? undefined : `${message}. ${decision.reason}`,
       hookSpecificOutput: {
@@ -83,7 +96,8 @@ export async function runProviderHook(store, provider, input, options = {}) {
     const previousToolState = store.getNoticeState(provider, toolSurface);
     store.setNoticeState(provider, toolSurface, decision.state);
     if (decision.blocked) {
-      const reason = `Usage Guard stopped this run at a tool boundary to protect your ${decision.provider} reserve. ${decision.reason}`;
+      const handover = stepping ? reserveHandover(store, decision, options) : "";
+      const reason = `Usage Guard stopped this run at a tool boundary to protect your ${decision.provider} reserve. ${decision.reason}${handover}`;
       return {
         systemMessage: `${message}. ${decision.reason}`,
         hookSpecificOutput: {
@@ -94,6 +108,24 @@ export async function runProviderHook(store, provider, input, options = {}) {
         continue: false,
         stopReason: reason,
       };
+    }
+    if (stepping) {
+      // A tool call may be in the middle of an edit. Tell the agent what to do
+      // at the next task boundary; only UserPromptSubmit carries switch advice.
+      if (previousStep?.state !== stepSignature) {
+        const pendingSurface = `${stepSurface}:pending`;
+        if (store.getNoticeState(provider, pendingSurface)?.state !== stepSignature) {
+          store.setNoticeState(provider, pendingSurface, stepSignature);
+          return {
+            systemMessage: `${message}. Model recommendation changed; finish the current edit and its checks, then use the new recommendation at the next task boundary.`,
+            hookSpecificOutput: {
+              hookEventName: eventName,
+              additionalContext: `At the next task boundary: ${usageContext(decision)}`,
+            },
+          };
+        }
+      }
+      return {};
     }
     if (
       decision.state === "protect"
@@ -127,7 +159,8 @@ export async function runProviderHook(store, provider, input, options = {}) {
 
   if (eventName === "PostToolBatch") {
     if (!decision.blocked) return {};
-    const reason = `Usage Guard stopped this run before another model request to protect your ${decision.provider} reserve. ${decision.reason}`;
+    const handover = stepping ? reserveHandover(store, decision, options) : "";
+    const reason = `Usage Guard stopped this run before another model request to protect your ${decision.provider} reserve. ${decision.reason}${handover}`;
     return {
       systemMessage: `${message}. ${decision.reason}`,
       decision: "block",
@@ -139,7 +172,8 @@ export async function runProviderHook(store, provider, input, options = {}) {
 
   if (decision.blocked && eventName === "UserPromptSubmit") {
     store.setNoticeState(provider, noticeSurface, decision.state);
-    const reason = `Usage Guard protected your ${decision.provider} reserve. ${decision.reason}`;
+    const handover = stepping ? reserveHandover(store, decision, options) : "";
+    const reason = `Usage Guard protected your ${decision.provider} reserve. ${decision.reason}${handover}`;
     return {
       systemMessage: `${message}. ${decision.reason}`,
       hookSpecificOutput: {
@@ -150,6 +184,18 @@ export async function runProviderHook(store, provider, input, options = {}) {
       reason,
       continue: false,
       stopReason: reason,
+    };
+  }
+
+  if (eventName === "UserPromptSubmit" && stepping && previousStep?.state !== stepSignature) {
+    store.setNoticeState(provider, noticeSurface, decision.state);
+    store.setNoticeState(provider, stepSurface, stepSignature);
+    return {
+      systemMessage: `${message}. ${decision.modelReason}`,
+      hookSpecificOutput: {
+        hookEventName: eventName,
+        additionalContext: usageContext(decision),
+      },
     };
   }
 
@@ -173,6 +219,13 @@ export async function runProviderHook(store, provider, input, options = {}) {
 }
 
 export function usageContext(decision) {
+  if (decision.modelStepping === true) {
+    return [
+      `[Usage Guard: ${decision.state}]`,
+      decision.instructions,
+      "Use usage_guard_status for fresh quota, model recommendations, and the overnight summary.",
+    ].join("\n");
+  }
   const guidance = {
     safe: "Work normally and avoid obvious duplicate context.",
     watch: "Reuse existing evidence, compact at a safe boundary, and keep parallel work bounded.",
@@ -184,10 +237,31 @@ export function usageContext(decision) {
 
   return [
     `[Usage Guard: ${decision.state}]`,
-    "Quality lock is on: never lower the active model or reasoning effort.",
+    decision.qualityLocked === false
+      ? "Model stepping is off: preserve the user's current model and reasoning effort."
+      : "Quality lock is on: never lower the active model or reasoning effort.",
     guidance,
     "Use usage_guard_status for live percentages, pace, and reset data.",
   ].join("\n");
+}
+
+function recommendationSignature(decision) {
+  return [
+    decision.recommendedModel || "waiting",
+    decision.recommendedEffort || "waiting",
+    decision.routineModel || "waiting",
+    decision.routineEffort || "waiting",
+    decision.taskRole || "unknown",
+  ].join("|");
+}
+
+function reserveHandover(store, decision, options) {
+  try {
+    const handover = writeQuotaHandover(store, decision, options.quotaHandover);
+    return handover ? ` Quota-only handover saved at ${handover.path}.` : "";
+  } catch {
+    return " Quota-only handover could not be written; keep work paused and inspect the local state directory.";
+  }
 }
 
 function removeUndefined(value) {

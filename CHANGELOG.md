@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.0 - 2026-09-29
+
+- Enable model stepping by default with verified Claude Opus/Sonnet 5.5,
+  Haiku 4.5, and GPT-6 Astra/Sol/Luna ladders; retain the optional legacy
+  quality lock and expose all settings through MCP.
+- Step on usable five-hour/weekly quota, rapid burn, and optional quiet hours,
+  with persistent per-window recovery margins and reset handling.
+- Split protected main-thread and routine subagent recommendations; cap
+  planning, reviews, architecture, and sensitive work at rung 2. Switch only
+  between tasks using host-supported controls.
+- Save recommendation transitions with quota evidence and an overnight summary
+  without storing prompts, source code, or tool arguments.
+- Keep reserve circuit breakers and save a quota-only local handover before
+  stopping. Fresh reserve evidence takes precedence over other stale meters.
+- Update CLI, MCP, dashboard, plugin instructions, compatibility diagnostics,
+  and the README for stepping behavior.
+- Correct Codex model metadata without relabeling model-specific quota buckets.
+- Upgrade smol-toml to 1.9.0 to address its malformed-input denial-of-service advisory.
+
 ## 0.4.0 - 2026-07-30
 
 - Restore Claude `PreToolUse` enforcement with the documented permission

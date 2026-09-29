@@ -1,13 +1,15 @@
 # Usage Guard
 
-Local-first quota pacing for Claude Code and Codex that never silently lowers model quality.
+Local quota protection and model stepping for Claude Code and Codex.
 
 Usage Guard reads every short, weekly, and additional quota window the provider
 actually exposes, learns the observed quota burn rate, and makes a visible
 choice before a session runs into its protected reserve. It never invents a
 reset time when the provider has not supplied one.
 
-> Stay in flow. Never hit a limit by surprise. Never silently trade away quality.
+Model stepping is on by default. Usage Guard recommends cheaper models for new
+work as quota tightens, preserves strong planning and review, and stops at your
+reserve. Every recommendation has a visible reason.
 
 ## What it does
 
@@ -20,9 +22,12 @@ reset time when the provider has not supplied one.
 - Keeps screenshots visually available for five later user turns, then replaces
   their repeated image payload with compact text memory on future Claude
   requests.
-- Reduces avoidable context and speculative concurrency before changing task timing.
-- Keeps the active model and reasoning effort locked by default.
-- Blocks new quota-heavy turns at the reserve and explains when work can resume.
+- Guides agents to reduce duplicate context and speculative concurrency.
+- Recommends separate model/effort settings for the main thread and routine
+  subagents, with recovery hysteresis and optional quiet hours.
+- Offers an optional quality lock to retain the previous model-preserving behavior.
+- Blocks new prompts and tool calls at the reserve, saves a quota-only handover,
+  and explains when work can resume.
 - Rechecks quota before Claude tool calls and after tool batches so an active
   desktop run can stop before another expensive model request.
 - Uses Claude's native compaction at 40% by default and saves the provider's
@@ -41,6 +46,11 @@ Node.js 22 or newer is required. Until the npm package is published, install dir
 npm install --global https://github.com/agent-layer-mcp/usage-guard/releases/latest/download/usage-guard.tgz
 usage-guard install
 ```
+
+The current release is **0.5.0**. Claude Code **2.1.284 or newer** is required
+for the default Opus/Sonnet 5.5 ladder. `usage-guard doctor` checks the CLI
+version; an older CLI must be updated before applying those recommendations.
+Claude Desktop has its own runtime and available tools.
 
 The installer:
 
@@ -87,12 +97,89 @@ usage-guard config
 usage-guard config enforcement protect weeklyReservePercent 7
 usage-guard config contextWatchPercent 70 contextProtectPercent 85
 usage-guard config compactionHandoffEnabled false
+usage-guard config qualityLock true
+usage-guard config qualityLock false modelStepping true
 
 # Choose a different native auto-compaction percentage during installation.
 usage-guard install --auto-compact-percent 50
 ```
 
 The dashboard runs on `http://127.0.0.1:4765` and binds only to localhost.
+
+## Model stepping
+
+The default ladders use these exact IDs, verified against the providers'
+[Claude model documentation](https://code.claude.com/docs/en/model-config) and
+[Codex model documentation](https://learn.chatgpt.com/docs/models):
+
+| Rung | Claude model / effort | Codex model / effort |
+| --- | --- | --- |
+| 1 | `claude-opus-5-5` / high | `gpt-6-astra` / high |
+| 2 | `claude-sonnet-5-5` / high | `gpt-6-sol` / high |
+| 3 | `claude-sonnet-5-5` / medium | `gpt-6-sol` / medium |
+| 4, routine only | `claude-haiku-4-5-20251001` / default | `gpt-6-luna` / high |
+
+Haiku's `default` is a Usage Guard label: omit the host's effort parameter and
+clear inherited overrides. Haiku 4.5 does not support that parameter. The
+stepped-down rungs reject `max` and `xhigh`. Fable and GPT-5.5 are not in the
+default ladders. Haiku 5.5 is not preconfigured before release; a verified new
+model can be added later through `modelLadders`.
+
+Usable quota is **remaining quota minus the protected reserve**, in percentage
+points of the whole allowance. Five-hour usable quota below 40%, 25%, and 12%
+selects rungs 2, 3, and 4. Weekly usable quota below 30% selects rung 2; below
+10% selects rung 4. The worse window wins. Rapid burn adds one rung, and quiet
+hours can add another; the ladder stops at rung 4. A sustained-pace warning
+(`paceRatio >= 0.95`) or a predicted reserve within `rapidBurnWatchMinutes`
+counts as rapid burn. Context pressure alone does not step models down.
+
+Each quota window retains its rung until usable quota reaches the triggering
+threshold plus the 10-point recovery margin. A fresh, provider-confirmed reset
+releases that window's latch without releasing another pressured window.
+Rapid-burn and quiet-hours adjustments end when those conditions end. Missing,
+stale, or expired meters withhold recommendations until refreshed; a fresh
+window at its reserve still stops work even if another meter is stale.
+
+Planning, architecture, finished-work reviews, and work involving money,
+security, children's data, or production use the best rung allowed by quota,
+never below rung 2. Routine searches, test runs, reading, mechanical edits, and
+summaries go one rung cheaper first. General implementation can use rung 3;
+the floor is routine-only. Without a task description, status assumes the main
+thread is planning. Sensitive task classification overrides a supplied routine
+role, using the task description in memory only.
+
+`usage_guard_status` and `usage_guard_decision` return `recommendedModel`,
+`recommendedEffort`, `routineModel`, `routineEffort`, and a one-line
+`modelReason`. Pass a `role` or transient `task` to obtain the right
+recommendation before starting a different kind of work. The `instructions`
+tell the agent to finish the current edit and verification, then switch between
+tasks. In Claude Desktop, agents can use the exposed
+`mcp__ccd_session_mgmt__set_session_model` and
+`mcp__ccd_session_mgmt__set_session_effort` tools with their declared schemas.
+Other hosts use an available session control or a new subagent with explicit
+model and effort. A host without either capability must report the limitation.
+Usage Guard emits guidance; it does not impersonate a host control or claim an
+unconfirmed switch. Subagents share the same quota and cannot bypass a reserve
+pause. Enabled stepping does not ask for confirmation on each change.
+
+Changes are recorded in `recentDecisions` with timestamps, quota figures,
+chosen rungs, and both model/effort pairs. These are **recommendation changes**,
+marked `applied: false`, not proof a host changed its session. The audit tracks
+the protected-main and routine roles consistently so querying a different role
+does not invent overnight changes. A separate history retains steps even after
+many status polls. `overnightSummary` summarizes the last 12 hours by default.
+
+Every setting is configurable through `usage_guard_configure`, including
+custom ladders, thresholds, reserves, hysteresis, role limits, rapid-burn
+settings, quiet hours, and summary duration. See the [complete default config
+and example status](docs/model-stepping.md). `quietHours: null` disables quiet
+hours; `{ "start": "22:00", "end": "07:00" }` uses the machine's local time.
+An optional IANA `timeZone` supports a fixed zone, and `extraRungs` defaults to 1.
+
+Setting `qualityLock: true` takes precedence over stepping and restores the
+legacy provider decisions and hook behavior. Setting both switches to false
+leaves model choice alone. Upgrading from the old fixed-lock release turns on
+the new default once; explicitly re-enabling the lock thereafter persists.
 
 ## Policy states
 
@@ -101,7 +188,7 @@ The dashboard runs on `http://127.0.0.1:4765` and binds only to localhost.
 | `safe` | Work normally; avoid duplicate context. |
 | `watch` | Reuse evidence, compact at safe boundaries, and bound parallel work. |
 | `protect` | Use one active path, preserve strong planning/review, and stop speculative branches. |
-| `queue` | Pause new quota-heavy work until reset. Deterministic local checks may continue. |
+| `queue` | Pause new prompts and tool calls at the reserve; save a quota-only handover. |
 | `missing` / `stale` | Refresh the meter; never block from uncertain data. |
 
 Default reserves are 8% for windows up to six hours and 5% for longer windows. Change them locally with `usage-guard config`.
@@ -187,7 +274,8 @@ image whenever its pixels are needed again. Add `[usage-guard:pin-images]` or
 `#keep-screenshot` to the screenshot turn to keep its image payload live.
 
 The gateway binds to `127.0.0.1:47822`. It does not call another model to create
-the memory, and it stores only numeric replacement counts and byte totals. On
+the memory, and it stores replacement counts, byte totals, timestamps, retention
+settings, and the configured upstream URL. On
 install it chains to the user's prior Claude upstream and restores that exact
 setting on uninstall.
 
@@ -229,6 +317,13 @@ observed derivative remain the decision authority.
 
 Usage Guard starts the local `codex app-server`, completes the documented initialization handshake, calls `account/rateLimits/read`, stores every returned limit bucket, and exits the child process. It does not read `auth.json` or provider tokens.
 
+The meter separately reads `config/read` for the configured model and effort
+when the hook did not supply a session-specific choice. A configured default is
+not proof of a session override. Quota bucket labels are never treated as model
+selection: a Spark-named bucket retains that name if the provider still returns
+it, while buckets absent from a fresh authoritative response leave the current
+view. Their history is retained for inspection.
+
 Codex currently supports built-in quota status-line segments rather than a Claude-style arbitrary renderer. The plugin uses those native segments, while lifecycle notices and the local dashboard show richer decisions.
 
 Codex's stable hook payload does not currently expose an exact context
@@ -243,8 +338,10 @@ manufacture an estimate.
 - Codex CLI: plugin, hooks, MCP, and native status segments.
 - Claude Desktop Code tab, local sessions: plugin, session/prompt/tool hooks, MCP,
   aggregate five-hour/weekly cache ingestion, and background macOS
-  notifications. Sessions receive one stable quality contract at start.
-  Entering `PROTECT` forces one visible tool approval at the next tool boundary;
+  notifications. Sessions receive the configured model policy at start.
+  With quality lock enabled, entering `PROTECT` retains the legacy tool approval.
+  With stepping enabled, recommendations are delivered for the next task
+  boundary without asking again for downgrade permission;
   reaching `QUEUE` denies the tool and stops the run. `PostToolBatch` provides a
   second stop before another model request. The compact `Stop` footer remains a
   best-effort host message and is not treated as the enforcement surface.
@@ -271,41 +368,33 @@ the value.
 
 ## Quality contract
 
-1. No silent model or reasoning downgrade.
-2. Architecture, difficult debugging, security, migrations, and final review retain strong reasoning.
-3. Timing changes before quality changes.
-4. Tests, static checks, and diff review remain protected.
-5. Stale or missing data never causes a hard block.
-6. Every intervention names the action and reason, and names the controlling
-   reset only when the provider supplied it.
+1. Model stepping is visible, authorized by the enabled setting, and applied only between tasks.
+2. Planning, architecture, sensitive work, and final review never go below rung 2.
+3. Routine work steps down first; tests and verification remain required.
+4. Quality lock restores the previous model-preserving behavior.
+5. Stale or missing observations never justify a stop; fresh reserve evidence does.
+6. Every intervention names its reason and uses a reset time only when supplied.
 
-### Why Usage Guard does not downgrade the model
-
-The quality lock is also a cache-economics decision. Field analysis of the
-current Claude Code implementation found `model` and reasoning effort among
-the prompt-cache key inputs. Changing either mid-session can invalidate a large
-cached prefix and cause an expensive cache rewrite before any lower-cost turns
-can repay it. Tool-schema changes can have a similar effect.
-
-That implementation detail is not a public compatibility guarantee and may
-change, but the product rule does not depend on it: Usage Guard first removes
-waste, bounds concurrency, recommends a safe compaction boundary, or delays
-work. It never silently weakens the selected model or reasoning effort.
+Switching models can change cache economics, so the governor uses hysteresis
+and task boundaries to avoid repeated switches. API token prices are not a
+guarantee of subscription quota savings; those provider weights are private.
 
 Usage Guard materially reduces surprise exhaustion when provider observations
 are fresh. It cannot guarantee that an account never reaches a provider limit:
 another device or application can consume the same quota, providers can omit a
 window, and no plugin can interrupt a model generation already in flight.
-Usage Guard deliberately avoids a catch-all `PreToolUse` subprocess on every
-tool call; the background monitor provides mid-run escalation alerts without
-hundreds of Node process launches. Missing or stale signals are shown explicitly
-and never produce a hard block.
+Usage Guard runs a `PreToolUse` check before tool calls and a `PostToolBatch`
+check before another model request. The background monitor also provides
+escalation alerts. A reserve stop blocks new prompts and tool calls, including
+deterministic tools inside the stopped run; independent local checks outside
+that run are unaffected.
 
 ## Privacy
 
 Usage Guard is local-only by default. It does not store:
 
-- prompts or transcript bodies
+- raw prompts or transcript bodies (the optional provider-supplied compact
+  summary handoff described above can contain conversation facts)
 - screenshots or other image payloads
 - source code or diffs
 - cookies, OAuth tokens, or provider auth files
@@ -314,8 +403,12 @@ Usage Guard is local-only by default. It does not store:
 
 It stores normalized quota observations, model/effort labels supplied by
 lifecycle payloads, local session identifiers, aggregate context percentage,
-policy decisions, and local configuration in
+policy decisions, model-step history, and local configuration in
 `~/.usage-guard/usage-guard.sqlite3`.
+
+Reserve handovers contain only quota/model metadata, never the task text,
+prompts, source code, or tool arguments. The hook saves them locally before
+stopping; the existing optional compact-summary handoff remains separate.
 
 On macOS its hook and one-minute background monitor may read Claude Desktop's
 local aggregate plan history at

@@ -21,6 +21,9 @@ Usage Guard is a local Node.js tool with these entry surfaces:
 9. Claude's native proactive compaction runs at 40% by default. `PostCompact`
    saves the provider-generated summary in a private project-keyed handoff, and
    a different `SessionStart` receives it as continuity context.
+10. Model stepping derives protected-main and routine-subagent recommendations
+    from usable quota, rapid burn, and optional quiet hours. SQLite keeps
+    per-window recovery latches and a separate recommendation history.
 
 ## Data flow
 
@@ -40,6 +43,11 @@ transient task class ---------------------------------------------+--> policy en
 ```
 
 The task classifier returns only `high-reasoning`, `standard`, `mechanical`, or `unknown`. The input text is discarded after the decision and never reaches SQLite.
+
+The stepping classifier separately returns a bounded role label: planning,
+architecture, review, sensitive, routine, or standard. The role, but never the
+description, may be retained for later hooks in the same session. Protected
+roles never fall below rung 2; only routine work can reach the floor.
 
 Claude's request path is independent of the quota policy path:
 
@@ -70,7 +78,7 @@ Usage Guard can:
 - preserve a reserve by blocking a new prompt
 - stop a Claude agentic run at a tool boundary after the reserve is reached
 - stop a Claude loop after a completed tool batch before the next model request
-- force one visible permission decision when a session first enters `PROTECT`
+- retain the legacy `PROTECT` permission decision when quality lock is on
 - show local macOS notifications while Claude Desktop is working
 - inject pacing guidance into a turn
 - configure Claude and Codex status-line surfaces
@@ -80,7 +88,20 @@ Usage Guard can:
   compact summary into a fresh local session
 - provide a reset-aware explanation
 
-Usage Guard does not mutate the host's active main-thread model or reasoning setting. Plugin APIs do not currently provide one portable, documented way to make that change across both products, and silent mutation would violate the quality contract.
+Usage Guard recommends model changes; the host agent applies them only between
+tasks through its exposed session control or an explicitly configured subagent.
+Claude Desktop's session-management model/effort tools are used only when
+available. The governor never claims an unconfirmed switch. Quality lock
+overrides stepping and restores the legacy provider/hook behavior.
+
+An authoritative Codex refresh records the active set of quota buckets as well
+as observations. Retired Spark-era buckets remain in history but leave the live
+view. `config/read` supplies the configured model/effort when a hook did not
+supply session-specific metadata; bucket labels are not model choices.
+
+Reserve hooks save an allowlisted quota-only handover before stopping. This
+contains no prompts, code, tool arguments, or conversation summaries and is
+separate from the optional compaction-summary handoff.
 
 Claude context observations are keyed by local session ID so parallel desktop
 sessions do not contaminate each other. Context pressure can elevate guidance

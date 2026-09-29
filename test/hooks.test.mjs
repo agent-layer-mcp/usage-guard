@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runProviderHook } from "../src/hooks.mjs";
@@ -9,6 +9,7 @@ import { GuardStore } from "../src/store.mjs";
 test("Claude prompt hook visibly blocks at reserve", async () => {
   const now = Date.now();
   const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ qualityLock: true });
   store.saveSnapshot({
     provider: "claude",
     source: "test",
@@ -30,6 +31,7 @@ test("Claude prompt hook visibly blocks at reserve", async () => {
 test("safe prompt hook stays silent", async () => {
   const now = Date.now();
   const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ qualityLock: true });
   store.saveSnapshot({
     provider: "claude",
     source: "test",
@@ -50,6 +52,7 @@ test("safe prompt hook stays silent", async () => {
 test("session start adds one stable quality contract without volatile meter data", async () => {
   const now = Date.now();
   const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ qualityLock: true });
   store.saveSnapshot({
     provider: "claude",
     source: "test",
@@ -71,6 +74,7 @@ test("session start adds one stable quality contract without volatile meter data
 test("Claude stop hook shows a post-response usage footer without model context", async () => {
   const now = Date.now();
   const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ qualityLock: true });
   store.saveSnapshot({
     provider: "claude",
     source: "claude-status-line",
@@ -160,6 +164,7 @@ test("Claude pre-tool hook stops an active run at the protected reserve", async 
 test("safe Claude pre-tool hook stays silent", async () => {
   const now = Date.now();
   const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ qualityLock: true });
   store.saveSnapshot({
     provider: "claude",
     source: "test",
@@ -185,6 +190,7 @@ test("safe Claude pre-tool hook stays silent", async () => {
 test("Claude hooks show one chat cue per watch or protect transition per session", async () => {
   const now = Date.now();
   const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ qualityLock: true });
   const save = (usedPercent, observedAt) => store.saveSnapshot({
     provider: "claude",
     source: "test",
@@ -353,6 +359,7 @@ test("a stale Claude Desktop cache never blocks a prompt", async () => {
     samples: [{ t: Date.now() - 24 * 60 * 60_000, org: "active", u: { fh: 100, sd: 100 } }],
   }));
   const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ qualityLock: true });
 
   const output = await runProviderHook(store, "claude", {
     hook_event_name: "UserPromptSubmit",
@@ -360,5 +367,80 @@ test("a stale Claude Desktop cache never blocks a prompt", async () => {
   }, { claudeDesktop: { cachePath } });
 
   assert.deepEqual(output, {});
+  store.close();
+});
+
+test("stepping is on by default and offers role-aware models at a task boundary", async () => {
+  const now = Date.now();
+  const store = new GuardStore({ filename: ":memory:" });
+  store.saveSnapshot({
+    provider: "claude", source: "test", observedAt: now,
+    windows: [{ key: "five-hour", label: "5 hour", usedPercent: 12, windowMinutes: 300, resetsAt: now + 240 * 60_000 }],
+  });
+  const prompt = await runProviderHook(store, "claude", {
+    hook_event_name: "UserPromptSubmit", session_id: "routine-task",
+    prompt: "Run tests and summarize the results",
+  }, { claudeDesktop: { platform: "linux" } });
+  assert.match(prompt.hookSpecificOutput.additionalContext, /Model stepping is on and already authorized/i);
+  assert.match(prompt.hookSpecificOutput.additionalContext, /claude-sonnet-5-5/);
+  assert.doesNotMatch(prompt.hookSpecificOutput.additionalContext, /Quality lock is on/i);
+  const tool = await runProviderHook(store, "claude", {
+    hook_event_name: "PreToolUse", session_id: "routine-task", tool_name: "Read",
+  }, { claudeDesktop: { platform: "linux" } });
+  assert.deepEqual(tool, {});
+  store.close();
+});
+
+test("a tool-boundary step is deferred until the next task, without asking for downgrade approval", async () => {
+  const now = Date.now();
+  const store = new GuardStore({ filename: ":memory:" });
+  const save = (usedPercent, observedAt) => store.saveSnapshot({
+    provider: "claude", source: "test", observedAt,
+    windows: [{ key: "five-hour", label: "5 hour", usedPercent, windowMinutes: 300, resetsAt: now + 240 * 60_000 }],
+  });
+  save(12, now);
+  await runProviderHook(store, "claude", {
+    hook_event_name: "UserPromptSubmit", session_id: "edit-session", prompt: "Build a settings page",
+  }, { claudeDesktop: { platform: "linux" } });
+  save(65, now + 1);
+  const tool = await runProviderHook(store, "claude", {
+    hook_event_name: "PreToolUse", session_id: "edit-session", tool_name: "Edit",
+  }, { claudeDesktop: { platform: "linux" } });
+  assert.match(tool.systemMessage, /next task boundary/i);
+  assert.equal(tool.hookSpecificOutput.permissionDecision, undefined);
+  const repeat = await runProviderHook(store, "claude", {
+    hook_event_name: "PreToolUse", session_id: "edit-session", tool_name: "Edit",
+  }, { claudeDesktop: { platform: "linux" } });
+  assert.deepEqual(repeat, {});
+  const nextTask = await runProviderHook(store, "claude", {
+    hook_event_name: "UserPromptSubmit", session_id: "edit-session", prompt: "Build the next settings page",
+  }, { claudeDesktop: { platform: "linux" } });
+  assert.match(nextTask.hookSpecificOutput.additionalContext, /Finish the current edit/i);
+  store.close();
+});
+
+test("reserve creates a private quota-only handover before blocking work", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-quota-handover-"));
+  const store = new GuardStore({ filename: path.join(root, "state.sqlite3") });
+  const now = Date.now();
+  store.saveSnapshot({
+    provider: "claude", source: "test", observedAt: now,
+    windows: [{ key: "five-hour", label: "5 hour", usedPercent: 94, windowMinutes: 300, resetsAt: now + 45 * 60_000 }],
+  });
+  const output = await runProviderHook(store, "claude", {
+    hook_event_name: "PreToolUse", session_id: "secret-session",
+    prompt: "Production security review: secret project title",
+    tool_name: "Bash", tool_input: { command: "secret-source-code" },
+  }, { claudeDesktop: { platform: "linux" } });
+  assert.equal(output.continue, false);
+  assert.match(output.stopReason, /Quota-only handover saved/);
+  const handoverPath = path.join(root, "handoffs", "quota-claude.json");
+  const body = readFileSync(handoverPath, "utf8");
+  const data = JSON.parse(body);
+  assert.equal(data.provider, "claude");
+  assert.equal(data.quota[0].usedPercent, 94);
+  assert.equal(data.model, "claude-sonnet-5-5");
+  assert.equal(statSync(handoverPath).mode & 0o777, 0o600);
+  assert.doesNotMatch(body, /secret|source|session|prompt|tool_input/i);
   store.close();
 });

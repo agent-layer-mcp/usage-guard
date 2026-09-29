@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.1 - 2026-09-29
+
+- Make compaction handoffs defer to the current model-stepping, quality-lock,
+  and reserve policy instead of repeating the old unconditional quality lock.
+- Update the legacy continuation footer when reading existing handoffs,
+  without rewriting the saved file or changing the provider's summary.
+- Clarify that default-on compact summaries are stored locally without
+  redaction and may contain conversation text, code, or other sensitive content.
+  Quota/model-step records and quota-only reserve handovers remain separate.
+- Document that quota-only reserve handovers are saved with model stepping
+  active, not under the legacy quality lock. Reserve stopping is unchanged.
+- Add regression coverage for new and legacy handoffs, current policy changes,
+  reserve handover modes, and disabling compact-summary persistence.
+
 ## 0.5.0 - 2026-09-29
 
 - Enable model stepping by default with verified Claude Opus/Sonnet 5.5,

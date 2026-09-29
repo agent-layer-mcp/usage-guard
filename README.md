@@ -47,7 +47,7 @@ npm install --global https://github.com/agent-layer-mcp/usage-guard/releases/lat
 usage-guard install
 ```
 
-The current release is **0.5.0**. Claude Code **2.1.284 or newer** is required
+The current release is **0.5.1**. Claude Code **2.1.284 or newer** is required
 for the default Opus/Sonnet 5.5 ladder. `usage-guard doctor` checks the CLI
 version; an older CLI must be updated before applying those recommendations.
 Claude Desktop has its own runtime and available tools.

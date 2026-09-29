@@ -1,6 +1,6 @@
 {
   "name": "@agent-layer/usage-guard",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Local quota protection and role-aware model stepping for Claude Code and Codex.",
   "type": "module",
   "bin": {

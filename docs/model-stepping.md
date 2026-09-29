@@ -1,6 +1,6 @@
 # Model stepping defaults and example
 
-These defaults are exported by `src/config.mjs` in Usage Guard 0.5.0. All fields
+These defaults are exported by `src/config.mjs` in Usage Guard 0.5.1. All fields
 can be changed through `usage_guard_configure`. Thresholds use quota remaining
 after the reserves, in percentage points of the whole allowance.
 

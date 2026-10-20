@@ -23,16 +23,18 @@ function laneHtml(provider, routeLane) {
   const d = provider.daily;
   const weekly = provider.windows.find((w) => w.windowMinutes > 360);
   const today = d
-    ? `<div class="row"><span>today</span>${bar(d.todayBudgetPercent ? d.usedTodayPercent / d.todayBudgetPercent : 1, 0, d.spent)}<span>${pct(d.usedTodayPercent)} / ${pct(d.todayBudgetPercent)}</span></div>`
+    ? `<div class="row"><span>today</span>${bar(d.todayBudgetPercent ? d.usedTodayPercent / d.todayBudgetPercent : 1, 0, d.spent)}<span>${pct(d.usedTodayPercent)} of ${pct(d.todayBudgetPercent)}</span></div>`
     : `<div class="row"><span>today</span>${bar(0)}<span>no share yet</span></div>`;
   const week = weekly
-    ? `<div class="row"><span>week</span>${bar(weekly.usedPercent / 100, weekly.reservePercent / 100)}<span>${Math.round(weekly.usedPercent)}%</span></div>`
+    ? `<div class="row"><span>week</span>${bar(weekly.usedPercent / 100, weekly.reservePercent / 100)}<span>${Math.round(weekly.usedPercent)}% used</span></div>`
     : "";
+  const shareUsed = d && d.todayBudgetPercent > 0 ? Math.round((d.usedTodayPercent / d.todayBudgetPercent) * 100) : null;
   const notes = [
-    weekly ? `Resets in ${countdown(weekly.resetsAt)}` : null,
-    d?.borrowedPercent > 0 ? `${pct(d.borrowedPercent)} borrowed from later days` : null,
+    shareUsed != null ? `${shareUsed}% of today's ${pct(d.todayBudgetPercent)} share used.` : null,
+    weekly ? `Week resets in ${countdown(weekly.resetsAt)}.` : null,
+    d?.borrowedPercent > 0 ? `${pct(d.borrowedPercent)} borrowed from later days.` : null,
     routeLane?.reason,
-  ].filter(Boolean).join(" · ");
+  ].filter(Boolean).join(" ");
   return `<article class="lane"><div class="lane-head"><span>${NAMES[provider.provider]}</span><span class="state ${esc(provider.state)}">${esc(provider.state)}</span></div>${today}${week}<p class="note">${esc(notes)}</p></article>`;
 }
 

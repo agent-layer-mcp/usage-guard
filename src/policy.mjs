@@ -1,5 +1,6 @@
 import { formatReset, minutesUntil } from "./time.mjs";
 import { applyModelStepping, overnightSummary } from "./model-stepping.mjs";
+import { evaluateDailyBudget } from "./daily-budget.mjs";
 
 const STATE_ORDER = Object.freeze({ missing: -1, stale: 0, safe: 1, watch: 2, protect: 3, queue: 4 });
 
@@ -103,10 +104,12 @@ export function buildProviderDecision(store, provider, options = {}) {
     reasonFor(controlling, quotaState, blocked),
     context?.state === "watch" || context?.state === "protect" ? context.reason : null,
   );
+  const daily = windows.find((window) => window.daily)?.daily || null;
   const decision = {
     provider,
     state,
     quotaState,
+    daily,
     action,
     reason,
     taskClass,
@@ -181,9 +184,14 @@ export function evaluateWindow(observation, history, config, now = Date.now()) {
     || (minutesUntilReserve != null && minutesUntilReserve <= config.rapidBurnWatchMinutes)
   ) state = "watch";
 
+  const daily = evaluateDailyBudget({ ...observation, reservePercent }, history, config, now);
+  // A spent daily share pushes new heavy work elsewhere; only the weekly reserve blocks.
+  if (daily?.spent && STATE_ORDER[state] < STATE_ORDER.protect) state = "protect";
+
   return {
     ...observation,
     state,
+    daily,
     remainingPercent,
     reservePercent,
     usablePercent,
@@ -286,6 +294,12 @@ function reasonFor(window, state, blocked) {
   const reset = window.resetsAt ? ` ${formatReset(window.resetsAt)}.` : "";
   if (state === "queue") {
     return `${window.label} has ${window.remainingPercent.toFixed(1)}% left, at the protected ${window.reservePercent}% reserve.${reset}${blocked ? " New heavy work is paused." : ""}`;
+  }
+  if (state === "protect" && window.daily?.spent) {
+    const d = window.daily;
+    return `Today's share of ${window.label} is spent: ${d.usedTodayPercent.toFixed(1)}% used of ${d.todayBudgetPercent.toFixed(1)}%`
+      + `${d.borrowedPercent > 0 ? ` (${d.borrowedPercent.toFixed(1)}% borrowed from later days)` : ""}.`
+      + ` Route new heavy work to another provider; the next share starts ${formatReset(d.nextDayAt).replace("resets ", "")}.`;
   }
   if (state === "protect") return `${window.label} is under pressure.${pace}${rapidBurn}${reset}`;
   if (state === "watch") return `${window.label} is approaching its sustainable pace.${pace}${rapidBurn}${reset}`;

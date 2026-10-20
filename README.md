@@ -114,10 +114,13 @@ The default ladders use these exact IDs, verified against the providers'
 
 | Rung | Claude model / effort | Codex model / effort |
 | --- | --- | --- |
-| 1 | `claude-opus-5-5` / high | `gpt-6-astra` / high |
-| 2 | `claude-sonnet-5-5` / high | `gpt-6-sol` / high |
-| 3 | `claude-sonnet-5-5` / medium | `gpt-6-sol` / medium |
-| 4, routine only | `claude-haiku-4-5-20251001` / default | `gpt-6-luna` / high |
+| 1 | `claude-opus-5-5` / high | `gpt-6.1-sol` / high |
+| 2 | `claude-sonnet-5-5` / high | `gpt-6.1-sol` / medium |
+| 3 | `claude-sonnet-5-5` / medium | `gpt-6-luna` / high |
+| 4, routine only | `claude-haiku-5-5` / default | `gpt-6-luna` / medium |
+
+`gpt-6-astra` is not on the default Codex ladder; add it yourself if you want it
+for specialist work.
 
 Haiku's `default` is a Usage Guard label: omit the host's effort parameter and
 clear inherited overrides. Haiku 4.5 does not support that parameter. The
@@ -192,6 +195,22 @@ the new default once; explicitly re-enabling the lock thereafter persists.
 | `missing` / `stale` | Refresh the meter; never block from uncertain data. |
 
 Default reserves are 8% for windows up to six hours and 5% for longer windows. Change them locally with `usage-guard config`.
+
+### Daily budget
+
+Weekly windows are also split into equal daily shares, so a heavy day cannot
+spend the rest of the week:
+
+```
+today's share = (100 − weekly reserve − % used when today began) ÷ days left until the weekly reset
+```
+
+A day starts at `dayStartTime` (default `08:00`) in `dayTimeZone` (default: the
+system time zone). Unspent share rolls into later days automatically. Once
+today's share is spent the provider moves to `protect` (never `queue`), the
+reason says how much was borrowed from later days, and model stepping drops a
+rung. Only the weekly reserve blocks work. Turn it off with
+`{"dailyBudget": false}`.
 
 Claude context guidance defaults to `watch` at 70% and `protect` at 85%.
 Context pressure never changes the selected model and never causes a hard block
@@ -343,7 +362,7 @@ manufacture an estimate.
   segments.
 - Codex CLI: plugin, hooks, MCP, and native status segments.
 - Claude Desktop Code tab, local sessions: plugin, session/prompt/tool hooks, MCP,
-  aggregate five-hour/weekly cache ingestion, and background macOS
+  aggregate five-hour/weekly cache ingestion, and background macOS or Linux
   notifications. Sessions receive the configured model policy at start.
   With quality lock enabled, entering `PROTECT` retains the legacy tool approval.
   With stepping enabled, recommendations are delivered for the next task
@@ -354,6 +373,11 @@ manufacture an estimate.
   Screenshot Memory requires the separate Desktop Third-Party Inference setup
   described above.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
+- Linux: `usage-guard install` adds a systemd user timer
+  (`usage-guard-monitor.timer`) that checks Claude and Codex every minute, and
+  alerts use `notify-send`. Claude Desktop's aggregate cache is read from
+  `~/.config/Claude` (or `$XDG_CONFIG_HOME/Claude`); it has no reset time, so the
+  Claude daily share appears once the Claude Code status line has reported one.
 - Claude Desktop SSH and remote sessions: do not assume that the local desktop
   aggregate cache describes the remote account or that provider hooks are
   supported.

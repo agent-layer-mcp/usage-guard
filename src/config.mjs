@@ -9,13 +9,14 @@ export const DEFAULT_MODEL_LADDERS = Object.freeze({
     Object.freeze({ model: "claude-opus-5-5", effort: "high" }),
     Object.freeze({ model: "claude-sonnet-5-5", effort: "high" }),
     Object.freeze({ model: "claude-sonnet-5-5", effort: "medium" }),
-    Object.freeze({ model: "claude-haiku-4-5-20251001", effort: "default" }),
+    Object.freeze({ model: "claude-haiku-5-5", effort: "default" }),
   ]),
   codex: Object.freeze([
-    Object.freeze({ model: "gpt-6-astra", effort: "high" }),
-    Object.freeze({ model: "gpt-6-sol", effort: "high" }),
-    Object.freeze({ model: "gpt-6-sol", effort: "medium" }),
+    // gpt-6-astra is left out: it is reserved for 3D work, not routine coding.
+    Object.freeze({ model: "gpt-6.1-sol", effort: "high" }),
+    Object.freeze({ model: "gpt-6.1-sol", effort: "medium" }),
     Object.freeze({ model: "gpt-6-luna", effort: "high" }),
+    Object.freeze({ model: "gpt-6-luna", effort: "medium" }),
   ]),
 });
 
@@ -41,6 +42,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   compactionHandoffEnabled: true,
   staleAfterMinutes: 15,
   dashboardPort: 4765,
+  dailyBudget: true,
+  dayStartTime: "08:00",
+  dayTimeZone: null,
 });
 
 export function guardHome(env = process.env) {
@@ -97,6 +101,9 @@ export function normalizeConfig(input = {}) {
     compactionHandoffEnabled: merged.compactionHandoffEnabled !== false,
     staleAfterMinutes: clampNumber(merged.staleAfterMinutes, 1, 240, 15),
     dashboardPort: Math.round(clampNumber(merged.dashboardPort, 1024, 65535, 4765)),
+    dailyBudget: merged.dailyBudget !== false,
+    dayStartTime: /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(merged.dayStartTime) ? merged.dayStartTime : "08:00",
+    dayTimeZone: merged.dayTimeZone || null,
   };
 }
 
@@ -147,6 +154,9 @@ export const CONFIG_SCHEMA = {
     compactionHandoffEnabled: { type: "boolean" },
     staleAfterMinutes: { type: "number", minimum: 1, maximum: 240 },
     dashboardPort: { type: "integer", minimum: 1024, maximum: 65535 },
+    dailyBudget: { type: "boolean" },
+    dayStartTime: { type: "string", pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+    dayTimeZone: { anyOf: [{ type: "null" }, { type: "string", minLength: 1, maxLength: 80 }] },
   },
 };
 
@@ -167,6 +177,7 @@ export function validateConfigPatch(patch) {
       }
     }
   }
+  if (patch.dayTimeZone) new Intl.DateTimeFormat("en", { timeZone: patch.dayTimeZone }).format();
   if (patch.quietHours) {
     if (patch.quietHours.start === patch.quietHours.end) throw new TypeError("Quiet hours start and end must differ.");
     if (patch.quietHours.timeZone) new Intl.DateTimeFormat("en", { timeZone: patch.quietHours.timeZone }).format();

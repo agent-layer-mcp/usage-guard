@@ -19,7 +19,7 @@ test("Claude prompt hook visibly blocks at reserve", async () => {
   const output = await runProviderHook(store, "claude", {
     hook_event_name: "UserPromptSubmit",
     prompt: "Implement the migration",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
   assert.equal(output.decision, "block");
   assert.match(output.reason, /protected/i);
   assert.equal(output.continue, false);
@@ -41,7 +41,7 @@ test("safe prompt hook stays silent", async () => {
   const output = await runProviderHook(store, "claude", {
     hook_event_name: "UserPromptSubmit",
     prompt: "Build a settings page",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
   assert.equal(output.continue, undefined);
   assert.equal(output.decision, undefined);
   assert.equal(output.systemMessage, undefined);
@@ -62,7 +62,7 @@ test("session start adds one stable quality contract without volatile meter data
   const output = await runProviderHook(store, "claude", {
     hook_event_name: "SessionStart",
     session_id: "stable-session",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
 
   const context = output.hookSpecificOutput.additionalContext;
   assert.match(context, /Quality lock is on/i);
@@ -98,7 +98,7 @@ test("Claude stop hook shows a post-response usage footer without model context"
     hook_event_name: "Stop",
     session_id: "desktop-session",
     last_assistant_message: "This content must not be repeated or stored.",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
 
   assert.match(output.systemMessage, /UG 5h 4% \| wk 30%/);
   assert.match(output.systemMessage, /SAFE/);
@@ -152,7 +152,7 @@ test("Claude pre-tool hook stops an active run at the protected reserve", async 
   const output = await runProviderHook(store, "claude", {
     hook_event_name: "PreToolUse",
     tool_name: "Read",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
 
   assert.equal(output.continue, false);
   assert.match(output.stopReason, /tool boundary/i);
@@ -181,7 +181,7 @@ test("safe Claude pre-tool hook stays silent", async () => {
   const output = await runProviderHook(store, "claude", {
     hook_event_name: "PreToolUse",
     tool_name: "Read",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
 
   assert.deepEqual(output, {});
   store.close();
@@ -211,13 +211,13 @@ test("Claude hooks show one chat cue per watch or protect transition per session
 
   save(75, now);
   const watch = await runProviderHook(store, "claude", input, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
   });
   assert.match(watch.systemMessage, /WATCH/);
   assert.match(watch.hookSpecificOutput.additionalContext, /Quality lock is on/i);
 
   const repeatedWatch = await runProviderHook(store, "claude", input, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
   });
   assert.deepEqual(repeatedWatch, {});
 
@@ -226,18 +226,18 @@ test("Claude hooks show one chat cue per watch or protect transition per session
     ...input,
     hook_event_name: "UserPromptSubmit",
   }, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
   });
   assert.match(protect.systemMessage, /PROTECT/);
 
   const repeatedProtectFromTool = await runProviderHook(store, "claude", input, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
   });
   assert.equal(repeatedProtectFromTool.hookSpecificOutput.permissionDecision, "ask");
   assert.match(repeatedProtectFromTool.hookSpecificOutput.permissionDecisionReason, /one active implementation path/i);
 
   const acceptedProtectFromTool = await runProviderHook(store, "claude", input, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
   });
   assert.deepEqual(acceptedProtectFromTool, {});
 
@@ -245,7 +245,7 @@ test("Claude hooks show one chat cue per watch or protect transition per session
     ...input,
     session_id: "other-session",
   }, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
   });
   assert.match(otherSession.systemMessage, /PROTECT/);
   store.close();
@@ -271,7 +271,7 @@ test("Claude post-tool batch hook stops before another model request at reserve"
     hook_event_name: "PostToolBatch",
     session_id: "active-session",
     tool_uses: [],
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
 
   assert.equal(output.decision, "block");
   assert.equal(output.continue, false);
@@ -303,7 +303,7 @@ test("Claude compact summary is saved and injected into a different session", as
     trigger: "auto",
     compact_summary: "The implementation is complete through the parser. Next, verify the desktop hook.",
   }, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
     compactionHandoff: { stateHome },
   });
   assert.match(written.systemMessage, /saved the compacted context handoff/i);
@@ -313,7 +313,7 @@ test("Claude compact summary is saved and injected into a different session", as
     session_id: "new-session",
     cwd: root,
   }, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
     compactionHandoff: { stateHome },
   });
   assert.match(resumed.hookSpecificOutput.additionalContext, /implementation is complete through the parser/i);
@@ -323,7 +323,7 @@ test("Claude compact summary is saved and injected into a different session", as
     session_id: "old-session",
     cwd: root,
   }, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
     compactionHandoff: { stateHome },
   });
   assert.doesNotMatch(sameSession.hookSpecificOutput.additionalContext, /implementation is complete through the parser/i);
@@ -336,7 +336,7 @@ test("Claude compact summary is saved and injected into a different session", as
     trigger: "auto",
     compact_summary: detailedSummary,
   }, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
     compactionHandoff: { stateHome },
   });
   const detailedResume = await runProviderHook(store, "claude", {
@@ -344,7 +344,7 @@ test("Claude compact summary is saved and injected into a different session", as
     session_id: "detailed-new-session",
     cwd: root,
   }, {
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
     compactionHandoff: { stateHome },
   });
   assert.match(detailedResume.hookSpecificOutput.additionalContext, /Critical final continuation detail/);
@@ -380,13 +380,13 @@ test("stepping is on by default and offers role-aware models at a task boundary"
   const prompt = await runProviderHook(store, "claude", {
     hook_event_name: "UserPromptSubmit", session_id: "routine-task",
     prompt: "Run tests and summarize the results",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
   assert.match(prompt.hookSpecificOutput.additionalContext, /Model stepping is on and already authorized/i);
   assert.match(prompt.hookSpecificOutput.additionalContext, /claude-sonnet-5-5/);
   assert.doesNotMatch(prompt.hookSpecificOutput.additionalContext, /Quality lock is on/i);
   const tool = await runProviderHook(store, "claude", {
     hook_event_name: "PreToolUse", session_id: "routine-task", tool_name: "Read",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
   assert.deepEqual(tool, {});
   store.close();
 });
@@ -401,20 +401,20 @@ test("a tool-boundary step is deferred until the next task, without asking for d
   save(12, now);
   await runProviderHook(store, "claude", {
     hook_event_name: "UserPromptSubmit", session_id: "edit-session", prompt: "Build a settings page",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
   save(65, now + 1);
   const tool = await runProviderHook(store, "claude", {
     hook_event_name: "PreToolUse", session_id: "edit-session", tool_name: "Edit",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
   assert.match(tool.systemMessage, /next task boundary/i);
   assert.equal(tool.hookSpecificOutput.permissionDecision, undefined);
   const repeat = await runProviderHook(store, "claude", {
     hook_event_name: "PreToolUse", session_id: "edit-session", tool_name: "Edit",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
   assert.deepEqual(repeat, {});
   const nextTask = await runProviderHook(store, "claude", {
     hook_event_name: "UserPromptSubmit", session_id: "edit-session", prompt: "Build the next settings page",
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
   assert.match(nextTask.hookSpecificOutput.additionalContext, /Finish the current edit/i);
   store.close();
 });
@@ -431,7 +431,7 @@ test("reserve creates a private quota-only handover before blocking work", async
     hook_event_name: "PreToolUse", session_id: "secret-session",
     prompt: "Production security review: secret project title",
     tool_name: "Bash", tool_input: { command: "secret-source-code" },
-  }, { claudeDesktop: { platform: "linux" } });
+  }, { claudeDesktop: { platform: "none" } });
   assert.equal(output.continue, false);
   assert.match(output.stopReason, /Quota-only handover saved/);
   const handoverPath = path.join(root, "handoffs", "quota-claude.json");

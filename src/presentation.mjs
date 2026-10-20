@@ -69,6 +69,11 @@ export function formatStatusText(status) {
       const pace = window.paceRatio == null ? "learning pace" : `${window.paceRatio.toFixed(1)}x sustainable`;
       output.push(`  ${window.label.padEnd(18)} ${window.usedPercent.toFixed(1).padStart(5)}% used  ${reset}  ${pace}`);
     }
+    if (provider.daily) {
+      const d = provider.daily;
+      const borrowed = d.borrowedPercent > 0 ? `, ${d.borrowedPercent.toFixed(1)}% borrowed` : "";
+      output.push(`  ${"today".padEnd(18)} ${d.usedTodayPercent.toFixed(1).padStart(5)}% of ${d.todayBudgetPercent.toFixed(1)}% daily share${borrowed}  ${d.daysLeft} days left`);
+    }
     if (provider.context) {
       const freshness = provider.context.stale ? "stale" : provider.contextState;
       output.push(`  ${"session context".padEnd(18)} ${provider.context.contextPercent.toFixed(1).padStart(5)}% used  ${freshness}`);

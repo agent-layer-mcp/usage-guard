@@ -20,6 +20,8 @@ const CODEX_STATUS_ITEMS = [
   "weekly-limit",
 ];
 const MONITOR_LABEL = "sh.agentlayer.usage-guard.monitor";
+const SYSTEMD_UNIT = "usage-guard-monitor";
+const SYSTEMD_MARKER = "Managed by Usage Guard";
 const SCREENSHOT_MEMORY_LABEL = "sh.agentlayer.usage-guard.screenshot-memory";
 const SCREENSHOT_MEMORY_PORT = 47_822;
 const SCREENSHOT_MEMORY_URL = `http://127.0.0.1:${SCREENSHOT_MEMORY_PORT}`;
@@ -282,12 +284,16 @@ export function inspectConfiguredIntegrations(options = {}) {
     && existsSync(bootstrapRuntime),
   );
   const monitorPath = record.monitor?.path
-    || path.join(home, "Library", "LaunchAgents", `${MONITOR_LABEL}.plist`);
-  const monitorReady = platform !== "darwin"
+    || (platform === "linux"
+      ? path.join(home, ".config", "systemd", "user", `${SYSTEMD_UNIT}.timer`)
+      : path.join(home, "Library", "LaunchAgents", `${MONITOR_LABEL}.plist`));
+  const monitorSupported = ["darwin", "linux"].includes(platform);
+  const monitorReady = !monitorSupported
     || Boolean(record.monitor?.enabled && existsSync(monitorPath));
   const notifierPath = record.notifier?.executable
     || path.join(stateHomeForRecord(recordPath, options.env), "Usage Guard.app", "Contents", "MacOS", "UsageGuardNotifier");
-  const notifierReady = platform !== "darwin" || existsSync(notifierPath);
+  const notifierReady = platform === "linux" ? existsSync(options.notifySendPath || "/usr/bin/notify-send")
+    : platform !== "darwin" || existsSync(notifierPath);
   const screenshotMemoryPath = record.screenshotMemory?.path
     || path.join(
       home,
@@ -344,7 +350,9 @@ export function inspectConfiguredIntegrations(options = {}) {
     {
       label: "Desktop notifications",
       ok: notifierReady,
-      detail: platform !== "darwin"
+      detail: platform === "linux"
+        ? notifierReady ? "notify-send alerts enabled" : "install libnotify (notify-send) for desktop alerts"
+        : platform !== "darwin"
         ? "not applicable on this platform"
         : notifierReady
           ? "native Usage Guard alerts enabled"
@@ -353,11 +361,13 @@ export function inspectConfiguredIntegrations(options = {}) {
     {
       label: "Desktop monitor",
       ok: monitorReady,
-      detail: platform !== "darwin"
+      detail: !monitorSupported
         ? "not applicable on this platform"
         : monitorReady
-          ? "checks aggregate Claude usage every minute"
-          : "rerun `usage-guard install` to enable macOS alerts",
+          ? platform === "linux"
+            ? "systemd user timer checks Claude and Codex every minute"
+            : "checks aggregate Claude usage every minute"
+          : `rerun \`usage-guard install\` to enable ${platform === "linux" ? "Linux" : "macOS"} alerts`,
     },
     {
       label: "Screenshot Memory",
@@ -411,9 +421,10 @@ export function configureNativeNotifier(options = {}) {
 
 export function configureBackgroundMonitor(options = {}) {
   const platform = options.platform || process.platform;
-  if (platform !== "darwin" || options.enabled === false || !options.runtime) {
+  if (!["darwin", "linux"].includes(platform) || options.enabled === false || !options.runtime) {
     return { enabled: false, platform };
   }
+  if (platform === "linux") return configureSystemdMonitor(options);
 
   const home = options.home || os.homedir();
   const stateHome = options.stateHome || guardHome();
@@ -443,6 +454,50 @@ export function configureBackgroundMonitor(options = {}) {
     previous,
     intervalSeconds: 60,
   };
+}
+
+// Linux: a systemd user timer runs one monitor cycle for both providers each minute.
+function configureSystemdMonitor(options) {
+  const home = options.home || os.homedir();
+  const stateHome = options.stateHome || guardHome();
+  const unitDir = path.join(options.env?.XDG_CONFIG_HOME || path.join(home, ".config"), "systemd", "user");
+  const servicePath = path.join(unitDir, `${SYSTEMD_UNIT}.service`);
+  const timerPath = path.join(unitDir, `${SYSTEMD_UNIT}.timer`);
+  const run = options.commandRunner || runCommand;
+  mkdirSync(unitDir, { recursive: true });
+  mkdirSync(stateHome, { recursive: true, mode: 0o700 });
+  const previous = existsSync(servicePath) && !readFileSync(servicePath, "utf8").includes(SYSTEMD_MARKER)
+    ? readFileSync(servicePath, "utf8") : null;
+  const command = [options.runtime.command, ...options.runtime.argsPrefix, "monitor", "--once", "--quiet", "--provider", "all"]
+    .map(systemdQuote).join(" ");
+  writeFileSync(servicePath, `# ${SYSTEMD_MARKER}
+[Unit]
+Description=Usage Guard quota monitor
+
+[Service]
+Type=oneshot
+Environment=${systemdQuote(`USAGE_GUARD_HOME=${stateHome}`)}
+ExecStart=${command}
+`, { mode: 0o600 });
+  writeFileSync(timerPath, `# ${SYSTEMD_MARKER}
+[Unit]
+Description=Run the Usage Guard quota monitor every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+`, { mode: 0o600 });
+  run("systemctl", ["--user", "daemon-reload"]);
+  run("systemctl", ["--user", "enable", "--now", `${SYSTEMD_UNIT}.timer`]);
+  return { enabled: true, label: SYSTEMD_UNIT, path: timerPath, servicePath, previous, intervalSeconds: 60 };
+}
+
+function systemdQuote(value) {
+  return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
 }
 
 export function configureCodex(configPath, stateHome) {
@@ -564,8 +619,17 @@ function restoreCodex(record) {
 function restoreBackgroundMonitor(record, options = {}) {
   if (!record?.enabled || !record.path) return;
   const platform = options.platform || process.platform;
-  if (platform !== "darwin") return;
   const run = options.commandRunner || runCommand;
+  if (platform === "linux" && record.servicePath) {
+    run("systemctl", ["--user", "disable", "--now", `${record.label}.timer`], true);
+    if (existsSync(record.path)) unlinkSync(record.path);
+    if (record.previous == null) {
+      if (existsSync(record.servicePath)) unlinkSync(record.servicePath);
+    } else writeFileSync(record.servicePath, record.previous, { mode: 0o600 });
+    run("systemctl", ["--user", "daemon-reload"], true);
+    return;
+  }
+  if (platform !== "darwin") return;
   const uid = options.uid ?? process.getuid?.();
   run("/bin/launchctl", ["bootout", `gui/${uid}`, record.path], true);
   if (record.previous == null) {

@@ -102,13 +102,13 @@ try {
   } else if (command === "monitor") {
     const providerIndex = args.indexOf("--provider");
     const provider = providerIndex >= 0 ? args[providerIndex + 1] : "claude";
-    if (!["claude", "codex"].includes(provider)) {
-      throw new Error("Monitor provider must be `claude` or `codex`.");
+    if (!["claude", "codex", "all"].includes(provider)) {
+      throw new Error("Monitor provider must be `claude`, `codex`, or `all`.");
     }
     const runOnce = async () => {
-      const results = await runMonitorCycle(store, { providers: [provider] });
+      const results = await runMonitorCycle(store, { providers: provider === "all" ? ["claude", "codex"] : [provider] });
       if (!args.includes("--quiet")) {
-        console.log(formatStatusLine(results[0].decision, { color: false }));
+        for (const result of results) console.log(formatStatusLine(result.decision, { color: false }));
       }
     };
     if (args.includes("--once")) {
@@ -427,7 +427,8 @@ Commands:
   demo                          Load local example readings
   reset                         Clear local readings and decision history
   mcp                           Run the local MCP server over stdio
-  monitor [--once]              Monitor aggregate usage and show macOS alerts
+  monitor [--once] [--provider claude|codex|all]
+                                Monitor usage and show desktop alerts (macOS, Linux)
   screenshot-memory status      Show local image-expiry savings
   screenshot-memory proxy       Run the local five-turn image-memory gateway
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Add a daily budget for weekly windows: an equal share of what is left above
+  the reserve for each remaining local day (08:00 boundary by default). A spent
+  share moves the provider to `protect`, reports borrowed percent, and steps
+  the model down a rung; only the weekly reserve still blocks.
+- Linux: systemd user timer monitor for Claude and Codex, `notify-send` alerts,
+  and Claude Desktop cache ingestion from `~/.config/Claude`.
+- `monitor --provider all` checks both providers in one run.
+- Default ladders: Claude rung 4 is now `claude-haiku-5-5`; Codex tops out at
+  `gpt-6.1-sol` (`gpt-6-astra` is no longer a default rung).
+
 ## 0.5.1 - 2026-09-29
 
 - Make compaction handoffs defer to the current model-stepping, quality-lock,

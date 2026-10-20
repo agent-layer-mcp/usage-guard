@@ -28,7 +28,7 @@ test("monitor notifies once on escalation and rearms after returning safe", asyn
   const cycle = () => runMonitorCycle(store, {
     providers: ["claude"],
     now,
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
     notifier: (notification) => notifications.push(notification),
   });
 
@@ -78,7 +78,7 @@ test("monitor alerts when short-window pressure takes control at the same overal
   const cycle = () => runMonitorCycle(store, {
     providers: ["claude"],
     now,
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
     notifier: (notification) => notifications.push(notification),
   });
 

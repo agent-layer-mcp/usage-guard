@@ -133,3 +133,10 @@ test("the OpenRouter key can come from the user's openrouter.env file", async ()
   await readOpenRouterSpend({ env: { USAGE_GUARD_HOME: home }, fetch: async (url, init) => { auth = init.headers.Authorization; return { ok: true, json: async () => ({ data: { usage_daily: 0 } }) }; } });
   assert.equal(auth, "Bearer sk-or-test");
 });
+
+test("a lane without a fresh reading is not described as having share left", (t) => {
+  const store = new GuardStore({ filename: ":memory:" });
+  t.after(() => store.close());
+  const route = routeJob(store, "code", { now: NOW });
+  assert.match(route.reason, /no fresh usage reading/);
+});

@@ -45,7 +45,9 @@ export function routeJob(store, kind, options = {}) {
       choice = (nearlyOut && payAsYouGo) || best || payAsYouGo;
       reason = !choice ? `No lane has budget for ${kind} work now.${nextShareText(lanes)}`
         : choice.subscription
-          ? `${laneName(choice.lane)} has the most daily share left (${choice.remainingTodayPercent.toFixed(1)}%).`
+          ? choice.verified
+            ? `${laneName(choice.lane)} has the most daily share left (${choice.remainingTodayPercent.toFixed(1)}%).`
+            : `${laneName(choice.lane)} has no fresh usage reading, so its share is unknown; no other lane has share left.`
           : best
             ? `${laneName(best.lane)} has under a quarter of today's share left and the other subscription is spent; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
             : `Both subscription lanes have spent today's share; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`;

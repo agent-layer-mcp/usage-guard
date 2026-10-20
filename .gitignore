@@ -6,3 +6,5 @@ coverage/
 .usage-guard/
 playwright-report/
 test-results/
+tray/target/
+tray/gen/

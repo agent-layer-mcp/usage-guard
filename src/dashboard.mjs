@@ -4,6 +4,14 @@ import { completeStatus, syncCodex } from "./service.mjs";
 
 export function startDashboard(store, options = {}) {
   const host = options.host || "127.0.0.1";
+  let spend = { at: 0, value: null };
+  // Tray polls every 30s; read OpenRouter spend at most every 5 minutes.
+  const readSpend = async () => {
+    if (!spend.value || Date.now() - spend.at > 5 * 60_000) {
+      spend = { at: Date.now(), value: await (options.readSpend || readOpenRouterSpend)() };
+    }
+    return spend.value;
+  };
   const port = Number(options.port || store.getConfig().dashboardPort);
   const server = http.createServer(async (request, response) => {
     try {
@@ -14,7 +22,7 @@ export function startDashboard(store, options = {}) {
         // Previews for the tray are not logged; `usage-guard route` records real routing.
         return json(response, 200, routeJob(store, url.searchParams.get("kind") || "code", {
           record: false,
-          payAsYouGo: await (options.readSpend || readOpenRouterSpend)(),
+          payAsYouGo: await readSpend(),
         }));
       }
       if (request.method === "POST" && url.pathname === "/api/sync/codex") {

@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The panel only calls this app's own commands",
+  "windows": ["panel"],
+  "permissions": ["core:default"]
+}

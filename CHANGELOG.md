@@ -14,6 +14,9 @@
   and review stay on Claude. New settings: `routingPaused`,
   `payAsYouGoDailyCapUsd` (default 5), `payAsYouGoModel`. The dashboard serves
   `GET /api/route` previews.
+- `tray/`: Tauri 2 tray app (Linux, Windows, macOS) showing each lane's daily
+  share, routing choice, recent decisions, a pause toggle and a user-only
+  Codex banked-reset link.
 - A protect state caused only by a spent daily share never asks for tool
   approval or denies, including with quality lock on.
 - Default ladders: Claude rung 4 is now `claude-haiku-5-5`; Codex tops out at

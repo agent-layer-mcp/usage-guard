@@ -11,9 +11,9 @@
         "label": "panel",
         "title": "Usage Guard",
         "url": "index.html",
-        "width": 380,
-        "height": 640,
-        "minWidth": 340,
+        "width": 600,
+        "height": 760,
+        "minWidth": 480,
         "minHeight": 480,
         "visible": false,
         "skipTaskbar": true

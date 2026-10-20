@@ -21,6 +21,7 @@ const CODEX_STATUS_ITEMS = [
 ];
 const MONITOR_LABEL = "sh.agentlayer.usage-guard.monitor";
 const SYSTEMD_UNIT = "usage-guard-monitor";
+const SYSTEMD_SERVE_UNIT = "usage-guard-serve";
 const SYSTEMD_MARKER = "Managed by Usage Guard";
 const SCREENSHOT_MEMORY_LABEL = "sh.agentlayer.usage-guard.screenshot-memory";
 const SCREENSHOT_MEMORY_PORT = 47_822;
@@ -53,36 +54,40 @@ export function installIntegrations(options = {}) {
     runtime,
     bootstrapRuntimePath,
     providers: normalizeProviderPaths(options.providerPaths),
-    codex: configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
+    // integrations: false leaves Claude and Codex settings and plugins untouched.
+    integrations: options.integrations !== false,
+    codex: options.integrations === false ? null : configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
   };
-  record.screenshotMemory = configureScreenshotMemoryProxy({
-    home,
-    stateHome,
-    runtime,
-    upstream: options.screenshotMemoryUpstream || screenshotMemoryUpstream,
-    retentionTurns: options.screenshotMemoryTurns || 5,
-    enabled: options.installScreenshotMemory !== false,
-    platform: options.platform,
-    uid: options.uid,
-    commandRunner: options.commandRunner || runCommand,
-  });
-  record.claude = configureClaude(
-    claudeSettingsPath,
-    stateHome,
-    runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
-    {
-      screenshotMemoryUrl: record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
-      autoCompactPercent: options.autoCompactPercent,
-    },
-  );
-  if (
-    configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
-    && existingRecord.claude
-    && Object.hasOwn(existingRecord.claude, "previousBaseUrl")
-  ) {
-    record.claude.previousBaseUrl = existingRecord.claude.previousBaseUrl;
+  if (options.integrations !== false) {
+    record.screenshotMemory = configureScreenshotMemoryProxy({
+      home,
+      stateHome,
+      runtime,
+      upstream: options.screenshotMemoryUpstream || screenshotMemoryUpstream,
+      retentionTurns: options.screenshotMemoryTurns || 5,
+      enabled: options.installScreenshotMemory !== false,
+      platform: options.platform,
+      uid: options.uid,
+      commandRunner: options.commandRunner || runCommand,
+    });
+    record.claude = configureClaude(
+      claudeSettingsPath,
+      stateHome,
+      runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
+      {
+        screenshotMemoryUrl: record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
+        autoCompactPercent: options.autoCompactPercent,
+      },
+    );
+    if (
+      configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
+      && existingRecord.claude
+      && Object.hasOwn(existingRecord.claude, "previousBaseUrl")
+    ) {
+      record.claude.previousBaseUrl = existingRecord.claude.previousBaseUrl;
+    }
+    preservePreviousClaudeEnvironment(record.claude, existingRecord.claude);
   }
-  preservePreviousClaudeEnvironment(record.claude, existingRecord.claude);
   record.notifier = configureNativeNotifier({
     packageRoot,
     stateHome,
@@ -94,12 +99,13 @@ export function installIntegrations(options = {}) {
     stateHome,
     runtime,
     enabled: options.installMonitor !== false,
+    start: options.startMonitor !== false,
     platform: options.platform,
     uid: options.uid,
     commandRunner: options.commandRunner || runCommand,
   });
 
-  if (options.installPlugins !== false && packageRoot) {
+  if (options.installPlugins !== false && options.integrations !== false && packageRoot) {
     record.plugins = installPlugins(packageRoot, options.commandRunner || runCommand);
   }
   writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
@@ -491,13 +497,41 @@ AccuracySec=15s
 [Install]
 WantedBy=timers.target
 `, { mode: 0o600 });
+  // The local API for the tray; installed stopped, started with `systemctl --user enable --now usage-guard-serve`.
+  const servePath = path.join(unitDir, `${SYSTEMD_SERVE_UNIT}.service`);
+  writeFileSync(servePath, `# ${SYSTEMD_MARKER}
+[Unit]
+Description=Usage Guard local API for the tray
+
+[Service]
+Environment=${systemdQuote(`USAGE_GUARD_HOME=${stateHome}`)}
+ExecStart=${[options.runtime.command, ...options.runtime.argsPrefix, "serve"].map(systemdQuote).join(" ")}
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+`, { mode: 0o600 });
   run("systemctl", ["--user", "daemon-reload"]);
-  run("systemctl", ["--user", "enable", "--now", `${SYSTEMD_UNIT}.timer`]);
-  return { enabled: true, label: SYSTEMD_UNIT, path: timerPath, servicePath, previous, intervalSeconds: 60 };
+  if (options.start !== false) run("systemctl", ["--user", "enable", "--now", `${SYSTEMD_UNIT}.timer`]);
+  return {
+    enabled: true, label: SYSTEMD_UNIT, path: timerPath, servicePath, servePath, previous, intervalSeconds: 60,
+    started: options.start !== false,
+  };
 }
 
 function systemdQuote(value) {
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
+}
+
+// Master switch side effect: on Linux the monitor timer runs only while Usage Guard is enabled.
+export function setMonitorRunning(running, options = {}) {
+  const recordPath = options.recordPath || installRecordPath(options.env);
+  if (!existsSync(recordPath)) return false;
+  const monitor = readJsonFile(recordPath, {}).monitor;
+  if (!monitor?.enabled || !monitor.servicePath || (options.platform || process.platform) !== "linux") return false;
+  const run = options.commandRunner || runCommand;
+  run("systemctl", ["--user", running ? "enable" : "disable", "--now", `${monitor.label}.timer`], true);
+  return true;
 }
 
 export function configureCodex(configPath, stateHome) {
@@ -622,6 +656,10 @@ function restoreBackgroundMonitor(record, options = {}) {
   const run = options.commandRunner || runCommand;
   if (platform === "linux" && record.servicePath) {
     run("systemctl", ["--user", "disable", "--now", `${record.label}.timer`], true);
+    if (record.servePath) {
+      run("systemctl", ["--user", "disable", "--now", `${SYSTEMD_SERVE_UNIT}.service`], true);
+      if (existsSync(record.servePath)) unlinkSync(record.servePath);
+    }
     if (existsSync(record.path)) unlinkSync(record.path);
     if (record.previous == null) {
       if (existsSync(record.servicePath)) unlinkSync(record.servicePath);

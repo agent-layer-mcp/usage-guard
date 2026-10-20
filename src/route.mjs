@@ -9,6 +9,10 @@ export function routeJob(store, kind, options = {}) {
   if (!ROUTE_KINDS.includes(kind)) throw new TypeError(`Route kind must be one of: ${ROUTE_KINDS.join(", ")}.`);
   const now = options.now ?? Date.now();
   const config = options.config || store.getConfig();
+  // Off: a passthrough answer so callers fall back to their own rules.
+  if (config.enabled === false) {
+    return { kind, lane: "off", disabled: true, reason: "Usage Guard is off.", lanes: [], createdAt: now };
+  }
   const role = { code: "standard", review: "review", plan: "planning", bulk: "routine" }[kind];
   const lanes = SUBSCRIPTION_LANES.map((provider) => subscriptionLane(
     buildProviderDecision(store, provider, { now, config, role }), kind,

@@ -8,6 +8,8 @@ import {
 import { writeQuotaHandover } from "./quota-handover.mjs";
 
 export async function runProviderHook(store, provider, input, options = {}) {
+  // Master switch off: hooks are silent and never ask, deny or block.
+  if (store.getConfig().enabled === false) return {};
   const eventName = input.hook_event_name || input.hookEventName || options.eventName || "UserPromptSubmit";
   const prompt = input.prompt || input.user_prompt || input.userPrompt || "";
   const sessionId = input.session_id || input.sessionId || null;

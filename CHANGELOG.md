@@ -14,6 +14,10 @@
   and review stay on Claude. New settings: `routingPaused`,
   `payAsYouGoDailyCapUsd` (default 5), `payAsYouGoModel`. The dashboard serves
   `GET /api/route` previews.
+- Master switch: `usage-guard enable|disable` (setting `enabled`). Off makes
+  hooks silent, the monitor idle, `route` a passthrough (exit 3) and the status
+  line `UG off`. `install --disabled --no-integrations` installs inert; on Linux
+  a stopped `usage-guard-serve` user service runs the API for the tray.
 - `tray/`: Tauri 2 tray app (Linux, Windows, macOS) showing each lane's daily
   share, routing choice, recent decisions, a pause toggle and a user-only
   Codex banked-reset link.

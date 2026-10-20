@@ -21,6 +21,7 @@ const STATE_ORDER = Object.freeze({
 });
 
 export async function runMonitorCycle(store, options = {}) {
+  if (store.getConfig().enabled === false) return [];
   const providers = options.providers || ["claude"];
   const notifier = options.notifier || notifyDesktop;
   const results = [];

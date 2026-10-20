@@ -68,9 +68,14 @@ async function refresh() {
     $("route-lane").textContent = route.lane === "wait" ? "Wait" : `${NAMES[route.lane] || route.lane}${route.model ? ` · ${route.model}` : ""}`;
     $("route-reason").textContent = route.reason;
     $("pause").checked = Boolean(status.config.routingPaused);
+    const on = status.config.enabled !== false;
+    $("enabled").checked = on;
+    $("enabled-label").textContent = on ? "On" : "Off";
+    $("off").hidden = on;
+    document.body.classList.toggle("is-off", !on);
     $("decisions").innerHTML = status.recentDecisions.slice(0, 6).map((d) =>
       `<li><span>${new Date(d.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} ${esc(d.provider)}</span> ${esc(d.action)}<br>${esc(d.reason)}</li>`).join("");
-    invoke("set_tray_label", { label: trayLabel(status, route) });
+    invoke("set_tray_label", { label: on ? trayLabel(status, route) : "UG off" });
   } catch (error) {
     $("error").textContent = String(error);
     $("error").hidden = false;
@@ -78,6 +83,10 @@ async function refresh() {
   }
 }
 
+$("enabled").addEventListener("change", async (event) => {
+  try { await invoke("set_enabled", { enabled: event.target.checked }); } catch (error) { $("error").textContent = String(error); $("error").hidden = false; }
+  refresh();
+});
 $("pause").addEventListener("change", async (event) => {
   try { await invoke("set_paused", { paused: event.target.checked }); } catch (error) { $("error").textContent = String(error); $("error").hidden = false; }
   refresh();

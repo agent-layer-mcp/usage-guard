@@ -184,6 +184,18 @@ legacy provider decisions and hook behavior. Setting both switches to false
 leaves model choice alone. Upgrading from the old fixed-lock release turns on
 the new default once; explicitly re-enabling the lock thereafter persists.
 
+## On/off switch
+
+`usage-guard disable` turns Usage Guard off without uninstalling: hooks return
+nothing (no notices, no ask or deny), the monitor does nothing and its Linux
+timer stops, `route` exits with code 3 so callers use their own rules, and the
+status line shows `UG off`. `usage-guard enable` turns it back on. The setting
+is `enabled` (also in `usage-guard config`, the local API and the tray).
+
+`usage-guard install --disabled --no-integrations` installs switched off and
+leaves Claude and Codex settings and plugins untouched; run `usage-guard install`
+later to add them.
+
 ## Routing jobs across providers
 
 `usage-guard route --kind code|review|plan|bulk [--json]` picks the lane for

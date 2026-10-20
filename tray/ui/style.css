@@ -17,3 +17,5 @@ main{padding:12px 16px 20px}h2{font:600 11px var(--mono);text-transform:uppercas
 .decisions span{color:var(--muted)}
 .banked button{font:inherit;padding:7px 12px;border:1px solid var(--seal);background:transparent;color:var(--ink);border-radius:6px;cursor:pointer}
 .banked button:focus-visible,.pause input:focus-visible{outline:2px solid var(--seal);outline-offset:2px}.banked p{color:var(--muted);font-size:11px}
+.off{background:var(--tint);border-left:3px solid var(--warn);padding:8px 10px;margin:0 0 10px}
+main>.pause{margin-bottom:6px}body.is-off #lanes,body.is-off .route{opacity:.45}

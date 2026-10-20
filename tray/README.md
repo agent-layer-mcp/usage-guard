@@ -8,6 +8,8 @@ or `USAGE_GUARD_PORT`).
   the current routing choice and reason, recent decisions, a pause toggle, and a
   Codex banked-reset button that only opens Codex's usage page after you confirm.
   Usage Guard never spends a banked reset.
+- On/Off switch at the top of the panel and in the menu; it runs
+  `usage-guard enable|disable`.
 - Linux tray icons only show a menu, so open the panel with **Show details**. On
   Windows and macOS a left click toggles it.
 

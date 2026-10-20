@@ -59,6 +59,51 @@ fn set_paused(paused: bool) -> Result<String, String> {
     request("PATCH", "/api/config", Some(&serde_json::json!({ "routingPaused": paused }).to_string()))
 }
 
+// Runs `usage-guard enable|disable` with the runtime recorded at install, so the
+// Linux monitor timer starts and stops with the switch.
+fn run_switch(enabled: bool) -> Result<String, String> {
+    let home = std::env::var("USAGE_GUARD_HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| {
+        let base = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
+        std::path::Path::new(&base).join(".usage-guard")
+    });
+    let record: serde_json::Value = std::fs::read_to_string(home.join("install-record.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .ok_or("Usage Guard is not installed. Run `usage-guard install` first.")?;
+    let command = record["runtime"]["command"].as_str().ok_or("Install record has no runtime")?;
+    let prefix: Vec<String> = record["runtime"]["argsPrefix"]
+        .as_array()
+        .map(|items| items.iter().filter_map(|item| item.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let output = std::process::Command::new(command)
+        .args(prefix)
+        .arg(if enabled { "enable" } else { "disable" })
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[tauri::command]
+fn set_enabled(enabled: bool) -> Result<String, String> {
+    run_switch(enabled)
+}
+
+fn toggle_enabled(app: &AppHandle) {
+    let enabled = request("GET", "/api/status", None)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .map(|status| status["config"]["enabled"].as_bool() != Some(false))
+        .unwrap_or(true);
+    let _ = run_switch(!enabled);
+    if let Some(window) = app.get_webview_window("panel") {
+        let _ = window.eval("refresh()");
+    }
+}
+
 #[tauri::command]
 fn set_tray_label(app: AppHandle, label: String) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
@@ -105,11 +150,12 @@ fn toggle_panel(app: &AppHandle) {
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![guard_status, guard_route, set_paused, set_tray_label, open_codex_usage])
+        .invoke_handler(tauri::generate_handler![guard_status, guard_route, set_paused, set_enabled, set_tray_label, open_codex_usage])
         .setup(|app| {
+            let switch = MenuItem::with_id(app, "switch", "Turn Usage Guard on/off", true, None::<&str>)?;
             let details = MenuItem::with_id(app, "details", "Show details", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&details, &quit])?;
+            let menu = Menu::with_items(app, &[&switch, &details, &quit])?;
             let mut tray = TrayIconBuilder::with_id(TRAY_ID)
                 .tooltip("Usage Guard")
                 .title("UG …")
@@ -117,6 +163,7 @@ fn main() {
                 // Linux tray icons only offer a menu, so the menu opens on left click there.
                 .show_menu_on_left_click(cfg!(target_os = "linux"))
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "switch" => toggle_enabled(app),
                     "details" => show_panel(app),
                     "quit" => app.exit(0),
                     _ => {}

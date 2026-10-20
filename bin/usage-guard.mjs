@@ -10,6 +10,7 @@ import { runProviderHook } from "../src/hooks.mjs";
 import {
   inspectConfiguredIntegrations,
   installIntegrations,
+  setMonitorRunning,
   uninstallIntegrations,
 } from "../src/install.mjs";
 import { runMcpServer } from "../src/mcp.mjs";
@@ -69,10 +70,8 @@ try {
   } else if (command === "statusline" && args[0] === "claude") {
     const input = await readStdinJson();
     const snapshot = ingestClaudeStatus(store, input);
-    const decision = providerDecision(store, "claude", {
-      sessionId: snapshot.sessionId,
-    });
-    console.log(formatStatusLine(decision));
+    if (store.getConfig().enabled === false) console.log("UG off");
+    else console.log(formatStatusLine(providerDecision(store, "claude", { sessionId: snapshot.sessionId })));
     store.close();
   } else if (command === "hook") {
     const provider = args[0];
@@ -164,6 +163,13 @@ try {
     const route = routeJob(store, kind, { payAsYouGo: await readOpenRouterSpend() });
     console.log(args.includes("--json") ? JSON.stringify(route, null, 2) : formatRoute(route));
     store.close();
+    if (route.disabled) process.exitCode = 3; // Callers fall back to their own rules.
+  } else if (command === "enable" || command === "disable") {
+    const enabled = command === "enable";
+    store.setConfig({ enabled });
+    const timer = setMonitorRunning(enabled);
+    console.log(`Usage Guard is ${enabled ? "on" : "off"}.${timer ? ` Monitor timer ${enabled ? "started" : "stopped"}.` : ""}`);
+    store.close();
   } else if (command === "config") {
     if (!args.length) console.log(JSON.stringify(store.getConfig(), null, 2));
     else {
@@ -172,9 +178,14 @@ try {
     }
     store.close();
   } else if (command === "install") {
+    const disabled = args.includes("--disabled");
+    const dayTimeZone = stringOption(args, "--day-time-zone");
+    if (disabled || dayTimeZone) store.setConfig({ ...(disabled ? { enabled: false } : {}), ...(dayTimeZone ? { dayTimeZone } : {}) });
     const record = installIntegrations({
       packageRoot,
       installPlugins: !args.includes("--settings-only"),
+      integrations: !args.includes("--no-integrations"),
+      startMonitor: !disabled,
       runtime: {
         command: process.execPath,
         argsPrefix: [cliPath],
@@ -185,7 +196,10 @@ try {
       },
       autoCompactPercent: numberOption(args, "--auto-compact-percent"),
     });
-    console.log(`Usage Guard installed for Claude Code and Codex.\nBackup and rollback record: ${record.installedAt}`);
+    console.log(record.integrations
+      ? `Usage Guard installed for Claude Code and Codex.\nBackup and rollback record: ${record.installedAt}`
+      : "Usage Guard installed without touching Claude or Codex settings. Run `usage-guard install` again to add them.");
+    if (disabled) console.log("Usage Guard is off. Run `usage-guard enable` to switch it on.");
     store.close();
   } else if (command === "uninstall") {
     uninstallIntegrations({ removePlugins: !args.includes("--settings-only") });
@@ -463,13 +477,16 @@ Commands:
   sync [claude|codex|all]       Refresh supported provider-local usage meters
   serve [--port 4765]           Run the local dashboard
   config [key value]            Read or change local policy (JSON for arrays/objects)
-  install [--auto-compact-percent 40]
-                                Install plugins, guards, and early compaction
+  install [--auto-compact-percent 40] [--disabled] [--no-integrations] [--day-time-zone <zone>]
+                                Install plugins, guards, and early compaction.
+                                --disabled: install switched off, monitor stopped.
+                                --no-integrations: leave Claude/Codex settings and plugins alone.
   uninstall                     Remove integrations and restore prior settings
   doctor                        Verify providers, meters, and privacy boundary
   demo                          Load local example readings
   reset                         Clear local readings and decision history
   mcp                           Run the local MCP server over stdio
+  enable | disable              Master switch: hooks, monitor and routing on or off
   route [--kind code|review|plan|bulk] [--json] [--claude-used <pct> --claude-hours <h> [--claude-5h <pct>]]
                                 Pick the lane (Claude, Codex, DeepSeek) for the next job
   monitor [--once] [--provider claude|codex|all]

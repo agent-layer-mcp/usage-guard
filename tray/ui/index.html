@@ -9,9 +9,11 @@
 <body>
   <header>
     <div class="brand">usage guard<b>.</b></div>
-    <label class="pause"><input type="checkbox" id="pause"> Pause routing</label>
+    <label class="pause"><input type="checkbox" id="enabled" role="switch"> <strong id="enabled-label">On</strong></label>
   </header>
   <main>
+    <p class="off" id="off" hidden>Usage Guard is off: no hooks, alerts or routing. Turn it on with the switch above.</p>
+    <label class="pause"><input type="checkbox" id="pause"> Pause routing</label>
     <p class="error" id="error" role="alert" hidden></p>
     <section id="lanes" aria-live="polite"></section>
     <section class="route">

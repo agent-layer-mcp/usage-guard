@@ -36,7 +36,11 @@ export function routeJob(store, kind, options = {}) {
   } else {
     const open = lanes.filter((lane) => lane.available);
     const claude = open.find((lane) => lane.lane === "claude");
-    if ((kind === "plan" || kind === "review") && claude) {
+    const codexFirst = codexFirstRule(kind, config, lanes);
+    if (codexFirst?.applies) {
+      choice = lanes.find((lane) => lane.lane === "codex");
+      reason = codexFirst.reason;
+    } else if ((kind === "plan" || kind === "review") && claude) {
       choice = claude;
       reason = `${kind === "plan" ? "Planning" : "Review"} stays on Claude while its daily share allows.`;
     } else {
@@ -66,6 +70,7 @@ export function routeJob(store, kind, options = {}) {
             ? `${laneName(best.lane)} has under a quarter of today's share left and the other subscription is spent; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
             : `Both subscription lanes have spent today's share; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`;
       if (gate && !gate.ok && choice) reason = `${gate.reason} ${reason}`;
+      if (codexFirst) reason = `${codexFirst.reason} ${reason}`;
     }
   }
 
@@ -93,6 +98,21 @@ export function routeJob(store, kind, options = {}) {
     createdAt: now,
   });
   return route;
+}
+
+// Optional "lean on Codex" rule: code and bulk go to Codex while its weekly room is at or
+// above codexFirstUntilLeftPercent, ignoring Codex's daily share. Only a fresh reading counts.
+function codexFirstRule(kind, config, lanes) {
+  const line = config.codexFirstUntilLeftPercent;
+  if (line == null || (kind !== "code" && kind !== "bulk")) return null;
+  const codex = lanes.find((lane) => lane.lane === "codex");
+  if (!codex.verified) return { applies: false, reason: `Codex first: no fresh Codex reading, so falling back.` };
+  if (codex.state === "queue") return { applies: false, reason: "Codex first: Codex is at its reserve, so falling back." };
+  const left = codex.weeklyLeftPercent;
+  if (left == null) return { applies: false, reason: "Codex first: no weekly Codex window, so falling back." };
+  return left >= line
+    ? { applies: true, reason: `Codex first: ${left.toFixed(0)}% of the week left, at or above the ${line}% line.` }
+    : { applies: false, reason: `Codex first: ${left.toFixed(0)}% of the week left, below the ${line}% line, so falling back.` };
 }
 
 // Whether a Hermes job kind may go to Hermes first for this repo and attempt count.
@@ -138,8 +158,14 @@ function subscriptionLane(decision, kind) {
     remainingTodayPercent: daily ? daily.remainingTodayPercent
       : verified ? Math.min(...decision.windows.map((window) => window.usablePercent ?? 0), 100) : 0,
     nextDayAt: daily?.nextDayAt ?? null,
+    weeklyLeftPercent: weeklyWindow(decision.windows)?.remainingPercent ?? null,
     reason: laneReason(decision, { blocked, spent, verified }),
   };
+}
+
+function weeklyWindow(windows = []) {
+  return windows.filter((window) => window.windowMinutes > 360)
+    .sort((a, b) => b.windowMinutes - a.windowMinutes)[0];
 }
 
 function laneReason(decision, { blocked, spent, verified }) {

@@ -297,6 +297,12 @@ the next job:
   hosts and denies data collection, and says to run it from a scratch directory
   or worktree. The tray's model picker lists OpenRouter models that support tool
   calling, with prices and context length (`GET /api/models`, cached a day).
+- Lean on Codex: `usage-guard config codexFirstUntilLeftPercent 70` sends `code`
+  and `bulk` to Codex while Codex has a fresh reading and at least 70% of its
+  week left, ignoring Codex's daily share (the weekly reserve still applies).
+  Below the line, or with a stale or missing reading, the normal rules apply and
+  the reason says so. Planning and review are unchanged, and this rule never
+  picks Hermes. `usage-guard config codexFirstUntilLeftPercent null` turns it off.
 - Nothing left: the lane is `wait`, with the time the next daily share starts.
 - `{"routingPaused": true}` stops routing; a banked provider reset is never
   spent automatically.

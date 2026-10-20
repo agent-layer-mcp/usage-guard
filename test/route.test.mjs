@@ -144,3 +144,47 @@ test("a lane without a fresh reading is not described as having share left", (t)
   const route = routeJob(store, "code", { now: NOW });
   assert.match(route.reason, /no fresh usage reading/);
 });
+
+test("Codex first sends code and bulk to Codex above the line, even with its daily share spent", (t) => {
+  // Codex: 5% used at day start, 36% now: 31 used of today's 30% share (spent), 64% of the week left.
+  const store = fixture(t, { claude: [40, 41], codex: [5, 36], config: { codexFirstUntilLeftPercent: 60 } });
+  for (const kind of ["code", "bulk"]) {
+    const route = routeJob(store, kind, { now: NOW, payAsYouGo: hermes(0), record: false });
+    assert.equal(route.lane, "codex", kind);
+    assert.equal(route.lanes.find((lane) => lane.lane === "codex").available, false); // daily share spent
+    assert.match(route.reason, /Codex first: 64% of the week left, at or above the 60% line/);
+  }
+  assert.equal(routeJob(store, "plan", { now: NOW, payAsYouGo: hermes(0), record: false }).lane, "claude");
+  assert.equal(routeJob(store, "review", { now: NOW, payAsYouGo: hermes(0), record: false }).lane, "claude");
+});
+
+test("Codex first falls back below the line and never picks Hermes", (t) => {
+  const store = fixture(t, { claude: [40, 41], codex: [20, 38], config: { codexFirstUntilLeftPercent: 70 } });
+  const route = routeJob(store, "code", { now: NOW, payAsYouGo: hermes(0), record: false });
+  assert.equal(route.lane, "claude");
+  assert.match(route.reason, /^Codex first: 62% of the week left, below the 70% line, so falling back\. Claude/);
+  // Both subscriptions spent today: the normal rule picks Hermes, the Codex-first rule never does.
+  const spent = fixture(t, { claude: [40, 60], codex: [35, 62], config: { codexFirstUntilLeftPercent: 70 } });
+  const fallback = routeJob(spent, "code", { now: NOW, payAsYouGo: hermes(0), record: false });
+  assert.equal(fallback.lane, "hermes");
+  assert.match(fallback.reason, /38% of the week left, below the 70% line, so falling back/);
+});
+
+test("a stale Codex reading never triggers Codex first", (t) => {
+  const store = fixture(t, { claude: [40, 41], codex: [20, 21], config: { codexFirstUntilLeftPercent: 70 } });
+  const later = NOW + 60 * 60_000;
+  store.saveSnapshot({
+    provider: "claude", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: RESET }],
+  });
+  const route = routeJob(store, "code", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.equal(route.lane, "claude");
+  assert.match(route.reason, /^Codex first: no fresh Codex reading, so falling back\./);
+});
+
+test("codexFirstUntilLeftPercent accepts 0-100 or null", (t) => {
+  const store = fixture(t, { claude: [40, 41], codex: [20, 21] });
+  assert.equal(store.getConfig().codexFirstUntilLeftPercent, null);
+  store.setConfig({ codexFirstUntilLeftPercent: 70 });
+  assert.equal(store.getConfig().codexFirstUntilLeftPercent, 70);
+});

@@ -53,6 +53,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   // Job kinds that go to Hermes first, and the repos allowed to use it (opt-in, none by default).
   hermesJobKinds: ["lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan"],
   hermesRepos: [],
+  // Lean on Codex: code and bulk go to Codex while its weekly % left is at or above this (null: off).
+  codexFirstUntilLeftPercent: null,
 });
 
 export function guardHome(env = process.env) {
@@ -121,6 +123,8 @@ export function normalizeConfig(input = {}) {
       ? merged.hermesJobKinds.filter((kind) => DEFAULT_CONFIG.hermesJobKinds.includes(kind))
       : [...DEFAULT_CONFIG.hermesJobKinds],
     hermesRepos: Array.isArray(merged.hermesRepos) ? merged.hermesRepos.filter((repo) => typeof repo === "string") : [],
+    codexFirstUntilLeftPercent: merged.codexFirstUntilLeftPercent == null ? null
+      : clampNumber(merged.codexFirstUntilLeftPercent, 0, 100, null),
   };
 }
 
@@ -182,6 +186,7 @@ export const CONFIG_SCHEMA = {
       type: "array", maxItems: 6,
       items: { type: "string", enum: ["lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan"] },
     },
+    codexFirstUntilLeftPercent: { anyOf: [{ type: "null" }, { type: "number", minimum: 0, maximum: 100 }] },
     hermesRepos: { type: "array", maxItems: 50, items: { type: "string", pattern: "^/", maxLength: 1024 } },
   },
 };

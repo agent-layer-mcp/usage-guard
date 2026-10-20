@@ -47,7 +47,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   dayTimeZone: null,
   routingPaused: false,
   payAsYouGoDailyCapUsd: 5,
-  payAsYouGoModel: "deepseek/deepseek-v4.1-flash",
+  payAsYouGoModel: "deepseek/deepseek-v4.1-flash-1017",
 });
 
 export function guardHome(env = process.env) {

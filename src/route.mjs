@@ -50,6 +50,7 @@ export function routeJob(store, kind, options = {}) {
     lane: choice?.lane || "wait",
     model: choice?.model || null,
     effort: choice?.effort || null,
+    command: choice?.command || null,
     reason,
     paused: Boolean(config.routingPaused),
     lanes,
@@ -105,6 +106,8 @@ function payAsYouGoLane(config, spend) {
     state: available ? "safe" : "unavailable",
     model: config.payAsYouGoModel,
     effort: null,
+    // The dstest Hermes profile pins OpenRouter hosts and denies data collection; keep jobs on it.
+    command: `hermes -p dstest --provider openrouter -m ${config.payAsYouGoModel} -z "<task>"`,
     spentTodayUsd: spentUsd,
     dailyCapUsd: cap,
     remainingTodayUsd: spentUsd == null ? null : Math.max(0, cap - spentUsd),

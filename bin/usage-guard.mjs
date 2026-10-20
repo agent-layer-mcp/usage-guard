@@ -259,6 +259,7 @@ function formatRoute(route) {
       : lane.spentTodayUsd == null ? "spend unknown" : `$${lane.spentTodayUsd.toFixed(2)}/$${lane.dailyCapUsd} today`;
     lines.push(`  ${lane.lane.padEnd(9)} ${lane.available ? "open  " : "closed"} ${share}  ${lane.reason}`);
   }
+  if (route.command) lines.push(`run: ${route.command}`);
   if (route.lane === "deepseek") lines.push(`note: ${route.privacy}`);
   return lines.join("\n");
 }

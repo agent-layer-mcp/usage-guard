@@ -196,7 +196,9 @@ the next job:
   share left, or both are spent, a pay-as-you-go lane (DeepSeek through
   OpenRouter) takes the job while it is under `payAsYouGoDailyCapUsd` (default
   `$5`). That lane needs `OPENROUTER_API_KEY`; today's spend is read from
-  OpenRouter's key endpoint (UTC day).
+  OpenRouter's key endpoint (UTC day). The route gives the Hermes command to
+  run it with (`hermes -p dstest --provider openrouter ...`), a profile that pins
+  hosts and denies data collection.
 - Nothing left: the lane is `wait`, with the time the next daily share starts.
 - `{"routingPaused": true}` stops routing; a banked provider reset is never
   spent automatically.

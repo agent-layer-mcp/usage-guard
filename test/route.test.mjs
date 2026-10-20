@@ -44,6 +44,7 @@ test("with Claude spent and Codex nearly spent, DeepSeek takes code within its c
   const route = routeJob(store, "code", { now: NOW, payAsYouGo: deepseek(1.2) });
   assert.equal(route.lane, "deepseek");
   assert.match(route.reason, /\$5 daily cap/);
+  assert.match(route.command, /^hermes -p dstest --provider openrouter -m deepseek\/deepseek-v4\.1-flash-1017 /);
   assert.equal(routeJob(store, "code", { now: NOW, payAsYouGo: deepseek(5) }).lane, "codex");
   assert.equal(routeJob(store, "code", { now: NOW }).lane, "codex");
 });

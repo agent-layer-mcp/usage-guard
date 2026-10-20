@@ -8,3 +8,6 @@ playwright-report/
 test-results/
 tray/target/
 tray/gen/
+tray/design-ref/site-*.png
+tray/design-ref/og.png
+tray/design-ref/fixture-*.json

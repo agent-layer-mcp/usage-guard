@@ -35,7 +35,7 @@ function laneHtml(provider, routeLane) {
     d?.borrowedPercent > 0 ? `${pct(d.borrowedPercent)} borrowed from later days.` : null,
     routeLane?.reason,
   ].filter(Boolean).join(" ");
-  return `<article class="lane"><div class="lane-head"><span>${NAMES[provider.provider]}</span><span class="state ${esc(provider.state)}">${esc(provider.state)}</span></div>${today}${week}<p class="note">${esc(notes)}</p></article>`;
+  return `<article class="lane lane-${esc(provider.provider)}"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>${NAMES[provider.provider]}</span><span class="stamp ${esc(provider.state)}">${esc(provider.state)}</span></div>${today}${week}<p class="note">${esc(notes)}</p></article>`;
 }
 
 function payAsYouGoHtml(lane) {
@@ -44,7 +44,7 @@ function payAsYouGoHtml(lane) {
   const row = spent == null
     ? `<div class="row"><span>today</span>${bar(0)}<span>—</span></div>`
     : `<div class="row"><span>today</span>${bar(spent / lane.dailyCapUsd, 0, spent >= lane.dailyCapUsd)}<span>$${spent.toFixed(2)} / $${lane.dailyCapUsd}</span></div>`;
-  return `<article class="lane"><div class="lane-head"><span>Hermes (OpenRouter)</span><span class="state ${lane.available ? "safe" : "stale"}">${lane.available ? "open" : "closed"}</span></div>${row}<p class="note">${esc(lane.reason)}</p></article>`;
+  return `<article class="lane lane-hermes"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>Hermes (OpenRouter)</span><span class="stamp ${lane.available ? "safe" : "stale"}">${lane.available ? "open" : "closed"}</span></div>${row}<p class="note">${esc(lane.reason)}</p></article>`;
 }
 
 function trayLabel(status, route) {
@@ -69,16 +69,16 @@ async function refresh() {
     $("lanes").innerHTML = status.providers.map((p) => laneHtml(p, lanes[p.provider])).join("") + payAsYouGoHtml(lanes.hermes);
     $("hermes-model").textContent = status.config.hermesModel;
     if (document.activeElement !== $("cap")) $("cap").value = status.config.payAsYouGoDailyCapUsd;
-    $("route-lane").textContent = route.lane === "wait" ? "Wait" : `${NAMES[route.lane] || route.lane}${route.model ? ` · ${route.model}` : ""}`;
+    $("route-lane").textContent = route.lane === "off" ? "Your own rules (Usage Guard is off)" : route.lane === "wait" ? "Wait for the next share" : `${NAMES[route.lane] || route.lane}${route.model ? ` · ${route.model}` : ""}`;
     $("route-reason").textContent = route.reason;
     $("pause").checked = Boolean(status.config.routingPaused);
     const on = status.config.enabled !== false;
     $("enabled").checked = on;
-    $("enabled-label").textContent = on ? "On" : "Off";
+    $("enabled-label").textContent = on ? "on · guarding" : "off";
     $("off").hidden = on;
     document.body.classList.toggle("is-off", !on);
     $("decisions").innerHTML = status.recentDecisions.slice(0, 6).map((d) =>
-      `<li><span>${new Date(d.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} ${esc(d.provider)}</span> ${esc(d.action)}<br>${esc(d.reason)}</li>`).join("");
+      `<li><span class="when">${new Date(d.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${esc(d.provider)} · ${esc(d.action)}</span>${esc(d.reason)}</li>`).join("");
     invoke("set_tray_label", { label: on ? trayLabel(status, route) : "UG off" });
   } catch (error) {
     $("error").textContent = String(error);

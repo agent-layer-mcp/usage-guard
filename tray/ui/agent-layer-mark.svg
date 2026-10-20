@@ -1,0 +1,9 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Agent Layer mark</title>
+  <desc>Three flat geometric planes forming a layered A.</desc>
+  <g id="agent-layer-mark" shape-rendering="geometricPrecision">
+    <path fill="#5F8F6B" d="M294 92H465L301 790H130L294 92Z" />
+    <path fill="#4E6E8E" d="M566 92L846 790H674L505 318L566 92Z" />
+    <path fill="#26221D" d="M423 575H592L508 790H339L423 575Z" />
+  </g>
+</svg>

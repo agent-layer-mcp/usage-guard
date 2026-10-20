@@ -7,40 +7,58 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <div class="brand">usage guard<b>.</b></div>
-    <label class="pause"><input type="checkbox" id="enabled" role="switch"> <strong id="enabled-label">On</strong></label>
+  <header class="top">
+    <div class="brand">
+      <img class="brand-mark" src="agent-layer-mark.svg" alt="" aria-hidden="true">
+      <span class="brand-wordmark">agent layer</span>
+      <span class="brand-product">usage guard</span>
+    </div>
+    <label class="status-pill switch">
+      <input type="checkbox" id="enabled" role="switch">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="enabled-label">on</span>
+    </label>
   </header>
+
   <main>
-    <p class="off" id="off" hidden>Usage Guard is off: no hooks, alerts or routing. Turn it on with the switch above.</p>
-    <label class="pause"><input type="checkbox" id="pause"> Pause routing</label>
-    <p class="error" id="error" role="alert" hidden></p>
-    <section id="lanes" aria-live="polite"></section>
-    <section class="route">
-      <h2>Next job goes to</h2>
-      <div class="choice"><strong id="route-lane">…</strong><p id="route-reason"></p></div>
+    <p class="eyebrow">usage guard · local only · day starts 08:00</p>
+    <h1>Your week, <em>paced.</em></h1>
+    <p class="lede">Each AI lane gets an even share of what's left this week. When a share runs out, the next job goes to another lane.</p>
+
+    <p class="banner error" id="error" role="alert" hidden></p>
+    <p class="banner off" id="off" hidden>Usage Guard is off: no hooks, alerts or routing. Turn it on with the switch at the top.</p>
+
+    <section class="ink-card route">
+      <div class="ink-head"><span class="eyebrow on-ink">next job goes to</span><label class="pause"><input type="checkbox" id="pause"> pause routing</label></div>
+      <strong id="route-lane">…</strong>
+      <p id="route-reason"></p>
     </section>
-    <section class="hermes">
-      <h2>Hermes (OpenRouter) lane</h2>
-      <p class="current">Model: <strong id="hermes-model">…</strong></p>
+
+    <section id="lanes" class="lanes" aria-live="polite"></section>
+
+    <section class="card hermes">
+      <div class="card-head"><h2>Hermes model</h2><span class="stamp">openrouter</span></div>
+      <p class="current">Using <strong id="hermes-model">…</strong></p>
       <label for="model-search">Find a model (tool-calling models only)</label>
       <input type="search" id="model-search" placeholder="Search by name or id, e.g. deepseek, qwen, kimi">
       <select id="model-list" size="8" aria-label="OpenRouter models"></select>
       <div class="actions">
-        <button type="button" id="model-use">Use this model</button>
-        <button type="button" id="model-refresh">Refresh list</button>
+        <button type="button" class="btn btn-primary" id="model-use">Use this model</button>
+        <button type="button" class="btn btn-secondary" id="model-refresh">Refresh list</button>
       </div>
-      <p class="hint" id="model-hint">Prices are US$ per million input / output tokens. Jobs run through the Hermes dstest profile, which pins hosts and denies data collection; a model that profile's hosts don't serve will fail.</p>
+      <p class="caption" id="model-hint">Prices are US$ per million input / output tokens · jobs run through the Hermes dstest profile (pinned hosts, no data collection) · a model those hosts don't serve will fail</p>
       <label for="cap">Daily spend cap (US$)</label>
-      <div class="actions"><input type="number" id="cap" min="0" max="1000" step="0.5"><button type="button" id="cap-save">Save cap</button></div>
+      <div class="actions"><input type="number" id="cap" min="0" max="1000" step="0.5"><button type="button" class="btn btn-secondary" id="cap-save">Save cap</button></div>
     </section>
-    <section>
-      <h2>Recent decisions</h2>
+
+    <section class="card">
+      <div class="card-head"><h2>Recent decisions</h2></div>
       <ol id="decisions" class="decisions"></ol>
     </section>
+
     <section class="banked">
-      <button type="button" id="banked">Codex banked reset…</button>
-      <p>Usage Guard never spends this. The button opens Codex's usage page so you can choose to.</p>
+      <button type="button" class="btn btn-secondary" id="banked">Codex banked reset…</button>
+      <p class="caption">Usage Guard never spends this · the button opens Codex's usage page so you can choose to</p>
     </section>
   </main>
   <script src="app.js"></script>

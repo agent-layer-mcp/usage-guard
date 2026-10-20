@@ -36,7 +36,14 @@ reserve. Every recommendation has a visible reason.
 - Shows the same deliberate-choice notice in CLI and desktop plugin sessions.
 - Provides a local dashboard and MCP tools for agents.
 
-Usage Guard cannot create unlimited included quota. If demand exceeds the provider allowance, uninterrupted operation requires waiting for reset or a separately enabled paid overflow path. The current release implements protected waiting, not paid overflow.
+- Splits each weekly window into daily shares (day starts at 08:00 by default)
+  and routes the next job to the lane with the most share left: Claude, Codex,
+  or a capped pay-as-you-go Hermes (OpenRouter) lane.
+- Has a master on/off switch and a tray app for Linux, Windows and macOS.
+
+Usage Guard cannot create unlimited included quota. If demand exceeds the
+provider allowance, work waits for the next daily share or reset, or goes to the
+Hermes lane while it is under its daily dollar cap (default `$5`).
 
 ## Install
 
@@ -72,6 +79,58 @@ The installer:
 8. Configures Claude's supported proactive compaction variables to compact at
    40% of the active model window. The installer preserves and restores the
    user's previous values exactly.
+
+On Linux the installer also writes systemd user units: `usage-guard-monitor.timer`
+(started, unless `--disabled`) and `usage-guard-serve.service` (the local API
+for the tray, written but not started).
+
+Useful install flags:
+
+- `--disabled` installs switched off with the monitor stopped. A plain
+  `usage-guard install` installs switched on.
+- `--no-integrations` leaves Claude and Codex settings and plugins untouched.
+- `--day-time-zone <zone>` sets the time zone of the daily budget's day start,
+  for example `--day-time-zone Australia/Brisbane`.
+- `--auto-compact-percent <n>` changes the 40% early-compaction point.
+
+### What the hookup changes
+
+With integrations (the default), the installer changes:
+
+- `~/.claude/settings.json`: the `statusLine` command now runs Usage Guard. If you
+  already had a status line (for example `~/.claude/hooks/statusline.sh`), Usage
+  Guard runs it with the same input and prints its output unchanged, adding
+  `| <guard summary>` while switched on. It also adds the plugin and its hooks,
+  and sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (40) and
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (1000000).
+- `~/.codex/config.toml`: adds the `usage-guard@agent-layer` plugin, the
+  `agent-layer` marketplace, and a `[tui] status_line`.
+
+The previous values are saved in `~/.usage-guard/backups/` and in
+`~/.usage-guard/install-record.json`. `usage-guard uninstall` puts them back
+exactly. For a hand-made backup before installing:
+
+```bash
+mkdir -p ~/.usage-guard/my-backup
+cp ~/.claude/settings.json ~/.usage-guard/my-backup/claude-settings.json
+cp ~/.codex/config.toml ~/.usage-guard/my-backup/codex-config.toml
+```
+
+### Stable local install (from a checkout)
+
+To run a checkout day to day without branch switches changing the live tool:
+
+```bash
+scripts/deploy-local.sh
+usage-guard install --disabled --day-time-zone Australia/Brisbane
+```
+
+`deploy-local.sh` packs the checkout into `~/.local/share/usage-guard/app`,
+keeps the previous copy in `app.prev`, records the version in
+`app/DEPLOYED_VERSION`, links `~/.local/bin/usage-guard` to it, and copies
+`~/.local/bin/usage-guard-tray` if the tray has been built. Run `install` from
+the deployed command so hooks and services point at the fixed `app` path.
+To roll back, move `app.prev` back to `app`.
 
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 
@@ -192,9 +251,32 @@ timer stops, `route` exits with code 3 so callers use their own rules, and the
 status line shows `UG off`. `usage-guard enable` turns it back on. The setting
 is `enabled` (also in `usage-guard config`, the local API and the tray).
 
-`usage-guard install --disabled --no-integrations` installs switched off and
-leaves Claude and Codex settings and plugins untouched; run `usage-guard install`
-later to add them.
+`usage-guard install --disabled` installs switched off. Add
+`--no-integrations` to also leave Claude and Codex settings and plugins
+untouched; run `usage-guard install` later to add them.
+
+## Tray app
+
+`tray/` is a Tauri 2 app over the local API, for Linux, Windows and macOS. See
+[tray/README.md](tray/README.md) to build it.
+
+```bash
+systemctl --user enable --now usage-guard-serve   # Linux: start the local API
+usage-guard-tray &                                 # or: usage-guard serve, then the tray
+```
+
+To start it at login on Linux, add a desktop entry to `~/.config/autostart/`
+whose `Exec=` is the path to `usage-guard-tray`.
+
+- **Label:** `UG off` when switched off, `UG offline` when the local API is not
+  running; otherwise each lane's use of today's share.
+- **Opening the panel:** on Linux, clicking the icon opens a menu; choose
+  **Show details**. On Windows and macOS a left click opens it.
+- **Panel:** today's share against the budget per lane, the week bar with the
+  reserve, reset times, the current routing choice and why, the On/Off switch,
+  pause routing, the Hermes model picker, and the daily dollar cap.
+- The Codex banked-reset button only opens Codex's usage page after you
+  confirm. Usage Guard never spends a banked reset.
 
 ## Routing jobs across providers
 
@@ -209,7 +291,8 @@ the next job:
   takes the job with `hermesModel` while it is under `payAsYouGoDailyCapUsd` (default
   `$5`). That lane needs `OPENROUTER_API_KEY` (or the same line in
   `~/.usage-guard/openrouter.env`, which you write yourself); today's spend is read from
-  OpenRouter's key endpoint (UTC day). The route gives the Hermes command to
+  OpenRouter's key endpoint (UTC day). Keep that file `chmod 600` and never
+  commit it. The route gives the Hermes command to
   run it with (`hermes -p dstest --provider openrouter ...`), a profile that pins
   hosts and denies data collection, and says to run it from a scratch directory
   or worktree. The tray's model picker lists OpenRouter models that support tool
@@ -217,6 +300,8 @@ the next job:
 - Nothing left: the lane is `wait`, with the time the next daily share starts.
 - `{"routingPaused": true}` stops routing; a banked provider reset is never
   spent automatically.
+- Change the Hermes lane with `usage-guard config hermesModel <openrouter-model-id>`
+  and `usage-guard config payAsYouGoDailyCapUsd 5`, or in the tray.
 
 Pass `--claude-used <pct> --claude-hours <h> [--claude-5h <pct>]` when the
 plan limits come from the host (for example Claude Desktop's usage tool) rather
@@ -249,10 +334,14 @@ today's share = (100 − weekly reserve − % used when today began) ÷ days lef
 Days are counted fractionally, so a short last day before the reset gets a
 matching short share.
 A day starts at `dayStartTime` (default `08:00`) in `dayTimeZone` (default: the
-system time zone). Unspent share rolls into later days automatically. Once
+system time zone; set it with `install --day-time-zone` or
+`usage-guard config dayTimeZone Australia/Brisbane`). The starting figure is the
+last reading at or before the day start; readings from before Usage Guard was
+installed are filled in from Codex session logs and Claude Desktop's local
+usage cache. Unspent share rolls into later days automatically. Once
 today's share is spent the provider moves to `protect` (never `queue`), the
-reason says how much was borrowed from later days, and model stepping drops
-one rung. It never asks for approval or denies a tool. Only the weekly reserve blocks work. Turn it off with
+reason says how much was borrowed from later days, model stepping drops
+one rung, and `route` sends new work to another lane. It never asks for approval or denies a tool. Only the weekly reserve blocks work. Turn it off with
 `{"dailyBudget": false}`.
 
 Claude context guidance defaults to `watch` at 70% and `protect` at 85%.
@@ -505,6 +594,12 @@ text, image data, authorization headers, or transformed request bodies to disk.
 Its status file contains only counts, byte totals, timestamps, retention
 configuration, and the upstream URL.
 
+The Hermes (OpenRouter) lane is the one path that sends work to a third party:
+when you run the routed `hermes` command, its prompt and any files it reads go
+to OpenRouter and the model host. Usage Guard itself only reads the key's spend
+total and the public model list from OpenRouter; it does not store prompts. Never
+give that lane `.env` files, secrets, user data or children's data.
+
 See [PRIVACY.md](PRIVACY.md) and [SECURITY.md](SECURITY.md).
 
 ## Remove
@@ -517,7 +612,13 @@ npm uninstall --global @agent-layer/usage-guard
 The uninstall command removes both plugin integrations and restores the prior status-line settings without replacing unrelated current settings.
 On macOS it also unloads the Usage Guard background monitor and removes the
 native notification helper and Screenshot Memory gateway. Claude's prior
-`ANTHROPIC_BASE_URL` is restored.
+`ANTHROPIC_BASE_URL` is restored. On Linux it stops and removes the systemd
+units.
+
+It leaves behind `~/.usage-guard` (readings history, backups, install record)
+and anything `deploy-local.sh` or you added: `~/.local/bin/usage-guard`,
+`~/.local/bin/usage-guard-tray`, `~/.local/share/usage-guard`, and any tray
+autostart entry. Delete those by hand if you want them gone.
 
 ## Development
 

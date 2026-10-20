@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { VERSION } from "../src/config.mjs";
+import { installRecordPath, VERSION } from "../src/config.mjs";
 import { clearCompactionHandoffs } from "../src/compaction-handoff.mjs";
 import { startDashboard } from "../src/dashboard.mjs";
 import { runProviderHook } from "../src/hooks.mjs";
@@ -68,10 +69,16 @@ try {
     console.log(JSON.stringify({ synced: Object.keys(snapshots), windows: snapshots }, null, 2));
     store.close();
   } else if (command === "statusline" && args[0] === "claude") {
-    const input = await readStdinJson();
-    const snapshot = ingestClaudeStatus(store, input);
-    if (store.getConfig().enabled === false) console.log("UG off");
-    else console.log(formatStatusLine(providerDecision(store, "claude", { sessionId: snapshot.sessionId })));
+    let raw = "";
+    for await (const chunk of process.stdin) raw += chunk;
+    const snapshot = ingestClaudeStatus(store, raw.trim() ? JSON.parse(raw) : {});
+    // The status line Usage Guard replaced keeps running; off, its output is shown unchanged.
+    const previous = runPreviousStatusLine(raw);
+    if (store.getConfig().enabled === false) console.log(previous ?? "UG off");
+    else {
+      const guard = formatStatusLine(providerDecision(store, "claude", { sessionId: snapshot.sessionId }));
+      console.log(previous ? `${previous} | ${guard}` : guard);
+    }
     store.close();
   } else if (command === "hook") {
     const provider = args[0];
@@ -282,6 +289,19 @@ function formatRoute(route) {
 async function bestEffortProviderSyncs() {
   bestEffortClaudeDesktopSync();
   await bestEffortCodexSync();
+}
+
+function runPreviousStatusLine(input) {
+  let command;
+  try {
+    command = JSON.parse(readFileSync(installRecordPath(), "utf8")).claude?.previous?.command;
+  } catch {
+    return null;
+  }
+  // Never call ourselves (an earlier Usage Guard status line).
+  if (typeof command !== "string" || !command.trim() || /usage-guard(?:\.mjs)?["']?\s+["']?statusline/.test(command)) return null;
+  const run = spawnSync("/bin/sh", ["-c", command], { input, encoding: "utf8", timeout: 3000 });
+  return run.status === 0 && run.stdout ? run.stdout.replace(/\n+$/, "") : null;
 }
 
 async function readStdinJson() {

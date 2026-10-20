@@ -183,9 +183,8 @@ fn main() {
                         toggle_panel(tray.app_handle());
                     }
                 });
-            if let Some(icon) = app.default_window_icon() {
-                tray = tray.icon(icon.clone());
-            }
+            // Light variant of the mark: tray bars are dark on Linux and Windows by default.
+            tray = tray.icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray-light.png"))?);
             tray.build(app)?;
             Ok(())
         })

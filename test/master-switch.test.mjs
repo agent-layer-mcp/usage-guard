@@ -68,3 +68,20 @@ test("install without integrations leaves Claude/Codex settings alone and the ti
   writeFileSync(recordPath, "{}");
   assert.equal(setMonitorRunning(true, { recordPath, platform: "linux", commandRunner: runner }), false);
 });
+
+test("the Claude status line keeps the user's previous status line, unchanged while off", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-statusline-"));
+  const script = path.join(root, "statusline.sh");
+  writeFileSync(script, "#!/bin/sh\nread input\necho \"mine: $input\"\n", { mode: 0o755 });
+  writeFileSync(path.join(root, "install-record.json"), JSON.stringify({ claude: { previous: { type: "command", command: script } } }));
+  const cli = fileURLToPath(new URL("../bin/usage-guard.mjs", import.meta.url));
+  const run = (args, input = "") => spawnSync(process.execPath, [cli, ...args], {
+    input, encoding: "utf8", env: { ...process.env, USAGE_GUARD_HOME: root },
+  }).stdout.trim();
+  run(["config", "enabled", "false"]);
+  assert.equal(run(["statusline", "claude"], '{"session_id":"s"}'), 'mine: {"session_id":"s"}');
+  run(["config", "enabled", "true"]);
+  assert.match(run(["statusline", "claude"], '{"session_id":"s"}'), /^mine: \{"session_id":"s"\} \| UG /);
+});

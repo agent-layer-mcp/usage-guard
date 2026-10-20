@@ -105,11 +105,16 @@ export function buildProviderDecision(store, provider, options = {}) {
     context?.state === "watch" || context?.state === "protect" ? context.reason : null,
   );
   const daily = windows.find((window) => window.daily)?.daily || null;
+  const considered = stepping ? freshWindows : windows;
+  // Protect caused only by a spent daily share is advice: it must never ask or deny.
+  const dailyShareOnly = quotaState === "protect" && context?.state !== "protect"
+    && considered.filter((window) => window.state === "protect").every((window) => window.dailyShareOnly);
   const decision = {
     provider,
     state,
     quotaState,
     daily,
+    dailyShareOnly,
     action,
     reason,
     taskClass,
@@ -186,12 +191,14 @@ export function evaluateWindow(observation, history, config, now = Date.now()) {
 
   const daily = evaluateDailyBudget({ ...observation, reservePercent }, history, config, now);
   // A spent daily share pushes new heavy work elsewhere; only the weekly reserve blocks.
-  if (daily?.spent && STATE_ORDER[state] < STATE_ORDER.protect) state = "protect";
+  const dailyShareOnly = Boolean(daily?.spent && STATE_ORDER[state] < STATE_ORDER.protect);
+  if (dailyShareOnly) state = "protect";
 
   return {
     ...observation,
     state,
     daily,
+    dailyShareOnly,
     remainingPercent,
     reservePercent,
     usablePercent,

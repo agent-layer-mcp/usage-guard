@@ -444,3 +444,32 @@ test("reserve creates a private quota-only handover before blocking work", async
   assert.doesNotMatch(body, /secret|source|session|prompt|tool_input/i);
   store.close();
 });
+
+test("a spent daily share never asks or denies, even with quality lock on", async () => {
+  const now = Date.now();
+  const boundary = new Date(now - 60 * 60_000);
+  const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({
+    qualityLock: true,
+    dayTimeZone: "UTC",
+    dayStartTime: `${String(boundary.getUTCHours()).padStart(2, "0")}:${String(boundary.getUTCMinutes()).padStart(2, "0")}`,
+  });
+  const resetsAt = now + 6 * 24 * 60 * 60_000;
+  // 7.5 points in 23 hours: over today's ~7.4% share, but only 1.25x the weekly pace.
+  for (const [observedAt, usedPercent] of [[now - 23 * 60 * 60_000, 50], [now, 57.5]]) {
+    store.saveSnapshot({
+      provider: "claude",
+      source: "test",
+      observedAt,
+      windows: [{ key: "seven-day", label: "weekly", usedPercent, windowMinutes: 10_080, resetsAt }],
+    });
+  }
+  const output = await runProviderHook(store, "claude", {
+    hook_event_name: "PreToolUse",
+    tool_name: "Bash",
+  }, { claudeDesktop: { platform: "none" } });
+  assert.equal(output.hookSpecificOutput?.permissionDecision, undefined);
+  assert.notEqual(output.continue, false);
+  assert.match(output.systemMessage, /Today's share of weekly is spent/);
+  store.close();
+});

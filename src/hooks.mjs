@@ -129,6 +129,7 @@ export async function runProviderHook(store, provider, input, options = {}) {
     }
     if (
       decision.state === "protect"
+      && !decision.dailyShareOnly
       && !["protect", "queue"].includes(previousToolState?.state)
     ) {
       const reason = `${message}. ${decision.reason} Approve this tool only if it belongs to the one active implementation path.`;
@@ -143,7 +144,7 @@ export async function runProviderHook(store, provider, input, options = {}) {
       };
     }
     if (
-      decision.state === "watch"
+      (decision.state === "watch" || (decision.state === "protect" && decision.dailyShareOnly))
       && previousToolState?.state !== decision.state
     ) {
       return {

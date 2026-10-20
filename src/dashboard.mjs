@@ -1,4 +1,5 @@
 import http from "node:http";
+import { readOpenRouterSpend, routeJob } from "./route.mjs";
 import { completeStatus, syncCodex } from "./service.mjs";
 
 export function startDashboard(store, options = {}) {
@@ -9,6 +10,13 @@ export function startDashboard(store, options = {}) {
       const url = new URL(request.url || "/", `http://${request.headers.host || `${host}:${port}`}`);
       if (request.method === "GET" && url.pathname === "/") return html(response, dashboardHtml());
       if (request.method === "GET" && url.pathname === "/api/status") return json(response, 200, completeStatus(store));
+      if (request.method === "GET" && url.pathname === "/api/route") {
+        // Previews for the tray are not logged; `usage-guard route` records real routing.
+        return json(response, 200, routeJob(store, url.searchParams.get("kind") || "code", {
+          record: false,
+          payAsYouGo: await (options.readSpend || readOpenRouterSpend)(),
+        }));
+      }
       if (request.method === "POST" && url.pathname === "/api/sync/codex") {
         await syncCodex(store);
         return json(response, 200, completeStatus(store));
@@ -20,7 +28,7 @@ export function startDashboard(store, options = {}) {
       }
       return json(response, 404, { error: "Not found" });
     } catch (error) {
-      return json(response, 500, { error: error.message });
+      return json(response, error instanceof TypeError ? 400 : 500, { error: error.message });
     }
   });
 

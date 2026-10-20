@@ -36,20 +36,21 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
   }
   usedAtDayStart = Math.min(usedAtDayStart, window.usedPercent);
 
-  const daysLeft = Math.max(1, Math.ceil((window.resetsAt - Math.max(dayStart, periodStart)) / DAY - 1e-6));
-  const todayBudgetPercent = Math.max(0, 100 - reserve - usedAtDayStart) / daysLeft;
+  // Fractional days, so a short final day before the reset gets a matching short share.
+  const daysLeft = Math.max(1 / 24, (window.resetsAt - Math.max(dayStart, periodStart)) / DAY);
+  const todayBudgetPercent = Math.max(0, 100 - reserve - usedAtDayStart) * Math.min(1, daysLeft) / daysLeft;
   const usedTodayPercent = window.usedPercent - usedAtDayStart;
   return {
     dayStartAt: dayStart,
     nextDayAt: Math.min(dayStart + DAY, window.resetsAt),
-    daysLeft,
+    daysLeft: Math.round(daysLeft * 10) / 10,
     usedAtDayStartPercent: usedAtDayStart,
     todayBudgetPercent,
     usedTodayPercent,
     remainingTodayPercent: Math.max(0, todayBudgetPercent - usedTodayPercent),
     borrowedPercent: Math.max(0, usedTodayPercent - todayBudgetPercent),
     // Positive: unspent budget from earlier days rolled into today.
-    rolledForwardPercent: todayBudgetPercent - (100 - reserve) / Math.ceil(window.windowMinutes / 1440),
+    rolledForwardPercent: todayBudgetPercent - (100 - reserve) / (window.windowMinutes / 1440),
     spent: usedTodayPercent >= todayBudgetPercent,
     baselineEstimated,
   };

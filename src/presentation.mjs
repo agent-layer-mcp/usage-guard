@@ -72,7 +72,7 @@ export function formatStatusText(status) {
     if (provider.daily) {
       const d = provider.daily;
       const borrowed = d.borrowedPercent > 0 ? `, ${d.borrowedPercent.toFixed(1)}% borrowed` : "";
-      output.push(`  ${"today".padEnd(18)} ${d.usedTodayPercent.toFixed(1).padStart(5)}% of ${d.todayBudgetPercent.toFixed(1)}% daily share${borrowed}  ${d.daysLeft} days left`);
+      output.push(`  ${"today".padEnd(18)} ${d.usedTodayPercent.toFixed(1).padStart(5)}% of ${d.todayBudgetPercent.toFixed(1)}% daily share${borrowed}  ${d.daysLeft} days to reset`);
     }
     if (provider.context) {
       const freshness = provider.context.stale ? "stale" : provider.contextState;

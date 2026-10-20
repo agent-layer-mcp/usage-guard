@@ -184,6 +184,30 @@ legacy provider decisions and hook behavior. Setting both switches to false
 leaves model choice alone. Upgrading from the old fixed-lock release turns on
 the new default once; explicitly re-enabling the lock thereafter persists.
 
+## Routing jobs across providers
+
+`usage-guard route --kind code|review|plan|bulk [--json]` picks the lane for
+the next job:
+
+- `plan` and `review` stay on Claude while its daily share allows, then Codex.
+  They never go to a pay-as-you-go lane.
+- `code` and `bulk` go to the subscription lane with the most daily share left.
+  When one subscription is spent and the other has under a quarter of today's
+  share left, or both are spent, a pay-as-you-go lane (DeepSeek through
+  OpenRouter) takes the job while it is under `payAsYouGoDailyCapUsd` (default
+  `$5`). That lane needs `OPENROUTER_API_KEY`; today's spend is read from
+  OpenRouter's key endpoint (UTC day).
+- Nothing left: the lane is `wait`, with the time the next daily share starts.
+- `{"routingPaused": true}` stops routing; a banked provider reset is never
+  spent automatically.
+
+Pass `--claude-used <pct> --claude-hours <h> [--claude-5h <pct>]` when the
+plan limits come from the host (for example Claude Desktop's usage tool) rather
+than the status line. `GET /api/route?kind=code` on the local dashboard returns
+the same preview without logging it. Third-party lanes must never receive `.env`
+files, secrets, user data or children's data; Usage Guard only routes, it never
+proxies subscription tokens or cookies.
+
 ## Policy states
 
 | State | Behavior |
@@ -205,11 +229,13 @@ spend the rest of the week:
 today's share = (100 − weekly reserve − % used when today began) ÷ days left until the weekly reset
 ```
 
+Days are counted fractionally, so a short last day before the reset gets a
+matching short share.
 A day starts at `dayStartTime` (default `08:00`) in `dayTimeZone` (default: the
 system time zone). Unspent share rolls into later days automatically. Once
 today's share is spent the provider moves to `protect` (never `queue`), the
-reason says how much was borrowed from later days, and model stepping drops a
-rung. Only the weekly reserve blocks work. Turn it off with
+reason says how much was borrowed from later days, and model stepping drops
+one rung. It never asks for approval or denies a tool. Only the weekly reserve blocks work. Turn it off with
 `{"dailyBudget": false}`.
 
 Claude context guidance defaults to `watch` at 70% and `protect` at 85%.

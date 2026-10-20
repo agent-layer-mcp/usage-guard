@@ -28,6 +28,7 @@ import {
   syncCodex,
 } from "../src/service.mjs";
 import { GuardStore } from "../src/store.mjs";
+import { readOpenRouterSpend, routeJob } from "../src/route.mjs";
 
 const cliPath = fileURLToPath(import.meta.url);
 const packageRoot = path.resolve(path.dirname(cliPath), "..");
@@ -156,6 +157,13 @@ try {
     } else {
       throw new Error("Screenshot Memory command must be `status` or `proxy`.");
     }
+  } else if (command === "route") {
+    const kind = stringOption(args, "--kind") || "code";
+    await bestEffortProviderSyncs();
+    ingestClaudeUsageOverride(args);
+    const route = routeJob(store, kind, { payAsYouGo: await readOpenRouterSpend() });
+    console.log(args.includes("--json") ? JSON.stringify(route, null, 2) : formatRoute(route));
+    store.close();
   } else if (command === "config") {
     if (!args.length) console.log(JSON.stringify(store.getConfig(), null, 2));
     else {
@@ -219,6 +227,40 @@ function bestEffortClaudeDesktopSync() {
   } catch {
     return null;
   }
+}
+
+// Claude's plan limits from the host (e.g. Claude Desktop's get_usage) when no status line has reported them.
+function ingestClaudeUsageOverride(values) {
+  const used = numberOption(values, "--claude-used");
+  const hours = numberOption(values, "--claude-hours");
+  if (used == null || hours == null) return;
+  const now = Date.now();
+  const fiveHour = numberOption(values, "--claude-5h");
+  store.saveSnapshot({
+    provider: "claude",
+    source: "host-usage",
+    observedAt: now,
+    windows: [
+      { key: "seven-day", label: "weekly", usedPercent: used, windowMinutes: 10_080, resetsAt: now + hours * 3_600_000 },
+      ...(fiveHour == null ? [] : [{ key: "five-hour", label: "5 hour", usedPercent: fiveHour, windowMinutes: 300, resetsAt: null }]),
+    ],
+  });
+}
+
+function formatRoute(route) {
+  const lines = [
+    `lane: ${route.lane}${route.model ? ` (${route.model}${route.effort ? `, ${route.effort}` : ""})` : ""}`,
+    `reason: ${route.reason}`,
+  ];
+  for (const lane of route.lanes) {
+    const share = lane.subscription
+      ? lane.todayBudgetPercent == null ? "no daily share yet"
+        : `today ${lane.usedTodayPercent.toFixed(1)}/${lane.todayBudgetPercent.toFixed(1)}%`
+      : lane.spentTodayUsd == null ? "spend unknown" : `$${lane.spentTodayUsd.toFixed(2)}/$${lane.dailyCapUsd} today`;
+    lines.push(`  ${lane.lane.padEnd(9)} ${lane.available ? "open  " : "closed"} ${share}  ${lane.reason}`);
+  }
+  if (route.lane === "deepseek") lines.push(`note: ${route.privacy}`);
+  return lines.join("\n");
 }
 
 async function bestEffortProviderSyncs() {
@@ -427,6 +469,8 @@ Commands:
   demo                          Load local example readings
   reset                         Clear local readings and decision history
   mcp                           Run the local MCP server over stdio
+  route [--kind code|review|plan|bulk] [--json] [--claude-used <pct> --claude-hours <h> [--claude-5h <pct>]]
+                                Pick the lane (Claude, Codex, DeepSeek) for the next job
   monitor [--once] [--provider claude|codex|all]
                                 Monitor usage and show desktop alerts (macOS, Linux)
   screenshot-memory status      Show local image-expiry savings

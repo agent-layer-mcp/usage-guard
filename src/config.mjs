@@ -45,6 +45,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   dailyBudget: true,
   dayStartTime: "08:00",
   dayTimeZone: null,
+  routingPaused: false,
+  payAsYouGoDailyCapUsd: 5,
+  payAsYouGoModel: "deepseek/deepseek-v4.1-flash",
 });
 
 export function guardHome(env = process.env) {
@@ -104,6 +107,10 @@ export function normalizeConfig(input = {}) {
     dailyBudget: merged.dailyBudget !== false,
     dayStartTime: /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(merged.dayStartTime) ? merged.dayStartTime : "08:00",
     dayTimeZone: merged.dayTimeZone || null,
+    routingPaused: merged.routingPaused === true,
+    payAsYouGoDailyCapUsd: clampNumber(merged.payAsYouGoDailyCapUsd, 0, 1000, 5),
+    payAsYouGoModel: typeof merged.payAsYouGoModel === "string" && merged.payAsYouGoModel
+      ? merged.payAsYouGoModel : DEFAULT_CONFIG.payAsYouGoModel,
   };
 }
 
@@ -157,6 +164,9 @@ export const CONFIG_SCHEMA = {
     dailyBudget: { type: "boolean" },
     dayStartTime: { type: "string", pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
     dayTimeZone: { anyOf: [{ type: "null" }, { type: "string", minLength: 1, maxLength: 80 }] },
+    routingPaused: { type: "boolean" },
+    payAsYouGoDailyCapUsd: { type: "number", minimum: 0, maximum: 1000 },
+    payAsYouGoModel: { type: "string", pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$" },
   },
 };
 

@@ -9,6 +9,13 @@
 - Linux: systemd user timer monitor for Claude and Codex, `notify-send` alerts,
   and Claude Desktop cache ingestion from `~/.config/Claude`.
 - `monitor --provider all` checks both providers in one run.
+- `usage-guard route --kind code|review|plan|bulk` chooses Claude, Codex or a
+  capped pay-as-you-go DeepSeek lane from each lane's daily share; planning
+  and review stay on Claude. New settings: `routingPaused`,
+  `payAsYouGoDailyCapUsd` (default 5), `payAsYouGoModel`. The dashboard serves
+  `GET /api/route` previews.
+- A protect state caused only by a spent daily share never asks for tool
+  approval or denies, including with quality lock on.
 - Default ladders: Claude rung 4 is now `claude-haiku-5-5`; Codex tops out at
   `gpt-6.1-sol` (`gpt-6-astra` is no longer a default rung).
 

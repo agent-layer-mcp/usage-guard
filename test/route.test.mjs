@@ -63,7 +63,11 @@ test("everything spent waits for the next share; pause stops routing", (t) => {
 });
 
 test("OpenRouter spend uses only the API key and fails soft", async () => {
-  assert.deepEqual(await readOpenRouterSpend({ env: {} }), { configured: false });
+  const { mkdtempSync } = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const emptyHome = mkdtempSync(path.join(os.tmpdir(), "ug-nokey-"));
+  assert.deepEqual(await readOpenRouterSpend({ env: { USAGE_GUARD_HOME: emptyHome } }), { configured: false });
   let seen;
   const spend = await readOpenRouterSpend({
     env: { OPENROUTER_API_KEY: "k" },

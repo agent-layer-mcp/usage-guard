@@ -23,9 +23,10 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
   const dayStart = dayStartAt(now, config);
   const periodStart = window.resetsAt - window.windowMinutes * 60_000;
   const reserve = window.reservePercent ?? config.weeklyReservePercent;
-  const samples = (history || []).filter((item) => item.observedAt <= now);
+  const samples = (history || []).filter((item) => item.observedAt <= now && item.observedAt >= periodStart);
   let usedAtDayStart;
   let baselineEstimated = false;
+  let baselineAt = null;
   if (periodStart >= dayStart) {
     usedAtDayStart = 0; // The weekly window itself began today.
   } else {
@@ -33,6 +34,8 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
     const after = samples.find((item) => item.observedAt > dayStart);
     usedAtDayStart = before?.usedPercent ?? after?.usedPercent ?? window.usedPercent;
     baselineEstimated = !before;
+    // When the starting figure was read: the last reading before the day began, or the first after.
+    baselineAt = before?.observedAt ?? after?.observedAt ?? window.observedAt ?? now;
   }
   usedAtDayStart = Math.min(usedAtDayStart, window.usedPercent);
 
@@ -53,5 +56,6 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
     rolledForwardPercent: todayBudgetPercent - (100 - reserve) / (window.windowMinutes / 1440),
     spent: usedTodayPercent >= todayBudgetPercent,
     baselineEstimated,
+    baselineAt,
   };
 }

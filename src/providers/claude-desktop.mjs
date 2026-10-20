@@ -25,6 +25,19 @@ export function readClaudeDesktopUsage(options = {}) {
   }
 }
 
+// Every cached sample, oldest first, for finding usage at the local day start.
+export function readClaudeDesktopSamples(options = {}) {
+  const cachePath = options.cachePath ?? claudeDesktopUsagePath(options);
+  if (!cachePath) return [];
+  try {
+    const payload = JSON.parse(readFileSync(cachePath, "utf8"));
+    return (Array.isArray(payload?.samples) ? payload.samples : []).map(normalizeSample).filter(Boolean)
+      .sort((left, right) => left.observedAt - right.observedAt);
+  } catch {
+    return [];
+  }
+}
+
 export function parseClaudeDesktopUsage(payload, options = {}) {
   if (!payload || typeof payload !== "object" || !Array.isArray(payload.samples)) return null;
 

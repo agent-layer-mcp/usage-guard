@@ -46,7 +46,9 @@ export function routeJob(store, kind, options = {}) {
       reason = !choice ? `No lane has budget for ${kind} work now.${nextShareText(lanes)}`
         : choice.subscription
           ? choice.verified
-            ? `${laneName(choice.lane)} has the most daily share left (${choice.remainingTodayPercent.toFixed(1)}%).`
+            ? choice.hasDailyShare
+              ? `${laneName(choice.lane)} has the most daily share left (${choice.remainingTodayPercent.toFixed(1)}% of today's share).`
+              : `${laneName(choice.lane)} has ${choice.remainingTodayPercent.toFixed(1)}% of the week left; its daily share is unknown until a reset time is known.`
             : `${laneName(choice.lane)} has no fresh usage reading, so its share is unknown; no other lane has share left.`
           : best
             ? `${laneName(best.lane)} has under a quarter of today's share left and the other subscription is spent; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
@@ -96,12 +98,26 @@ function subscriptionLane(decision, kind) {
     todayBudgetPercent: daily?.todayBudgetPercent ?? null,
     usedTodayPercent: daily?.usedTodayPercent ?? null,
     // Without a daily share (no reset time yet), fall back to usable weekly percent.
+    hasDailyShare: Boolean(daily),
     remainingTodayPercent: daily ? daily.remainingTodayPercent
       : verified ? Math.min(...decision.windows.map((window) => window.usablePercent ?? 0), 100) : 0,
     nextDayAt: daily?.nextDayAt ?? null,
-    reason: blocked ? decision.reason : spent ? "Today's share is spent."
-      : verified ? "Has daily share left." : `Meter is ${decision.state}; share unknown.`,
+    reason: laneReason(decision, { blocked, spent, verified }),
   };
+}
+
+function laneReason(decision, { blocked, spent, verified }) {
+  const daily = decision.daily;
+  if (blocked) return decision.reason;
+  if (spent) {
+    return `Today's share is spent${daily.borrowedPercent > 0 ? `, ${daily.borrowedPercent.toFixed(1)}% borrowed from later days` : ""}.`;
+  }
+  if (!verified) return `Meter is ${decision.state}; share unknown.`;
+  const left = daily
+    ? `${daily.remainingTodayPercent.toFixed(1)}% of today's ${daily.todayBudgetPercent.toFixed(1)}% share left.`
+    : "No daily share yet (reset time unknown).";
+  // Pace pressure can apply while today's share still has room; say both.
+  return ["watch", "protect"].includes(decision.state) && !decision.dailyShareOnly ? `${left} ${decision.reason}` : left;
 }
 
 function hermesLane(config, spend) {

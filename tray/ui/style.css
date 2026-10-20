@@ -15,7 +15,7 @@
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--canvas);color:var(--text);font:15px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
-.top{position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;align-items:center;padding:14px 24px;background:rgba(244,241,234,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--hairline)}
+.top{position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;align-items:center;padding:14px 24px;background:var(--canvas);border-bottom:1px solid var(--hairline)}
 .brand{display:flex;align-items:center;gap:9px}.brand-mark{width:24px;height:24px}
 .brand-wordmark{font:500 19px/1 var(--serif);letter-spacing:-.9px}
 .brand-product{font:10.5px var(--mono);letter-spacing:.63px;color:var(--text-3);padding-left:10px;border-left:1px solid var(--hairline)}

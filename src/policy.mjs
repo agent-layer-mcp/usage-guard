@@ -59,7 +59,9 @@ export function buildProviderDecision(store, provider, options = {}) {
   const windows = observations.map((observation) => {
     const since = Math.max(observation.observedAt - 24 * 60 * 60_000, now - 8 * 24 * 60 * 60_000);
     const history = store.history(provider, observation.key, observation.resetsAt, since);
-    return evaluateWindow(observation, history, config, now);
+    // Readings from any source (some carry no reset time) decide where today started.
+    const dayHistory = store.history(provider, observation.key, null, now - 36 * 60 * 60_000);
+    return evaluateWindow(observation, history, config, now, dayHistory);
   });
 
   const stepping = config.modelStepping && !config.qualityLock;
@@ -157,7 +159,7 @@ export function buildStatus(store, options = {}) {
   };
 }
 
-export function evaluateWindow(observation, history, config, now = Date.now()) {
+export function evaluateWindow(observation, history, config, now = Date.now(), dayHistory = history) {
   const remainingPercent = Math.max(0, 100 - observation.usedPercent);
   const resetMinutes = minutesUntil(observation.resetsAt, now);
   const reservePercent = reserveFor(observation.windowMinutes, config);
@@ -189,7 +191,7 @@ export function evaluateWindow(observation, history, config, now = Date.now()) {
     || (minutesUntilReserve != null && minutesUntilReserve <= config.rapidBurnWatchMinutes)
   ) state = "watch";
 
-  const daily = evaluateDailyBudget({ ...observation, reservePercent }, history, config, now);
+  const daily = evaluateDailyBudget({ ...observation, reservePercent }, dayHistory, config, now);
   // A spent daily share pushes new heavy work elsewhere; only the weekly reserve blocks.
   const dailyShareOnly = Boolean(daily?.spent && STATE_ORDER[state] < STATE_ORDER.protect);
   if (dailyShareOnly) state = "protect";

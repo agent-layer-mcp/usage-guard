@@ -19,6 +19,18 @@ function bar(fraction, reserveFraction = 0, over = false) {
     + (reserveFraction ? `<div class="reserve" style="width:${reserveFraction * 100}%"></div>` : "") + "</div>";
 }
 
+const clock = (at) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+// Say where today's starting figure came from when it is not a reading from just before the day began.
+function baselineNote(d) {
+  if (!d?.baselineAt) return null;
+  if (d.baselineEstimated) return `No reading from before ${clock(d.dayStartAt)}, so today counts from ${clock(d.baselineAt)}.`;
+  if (d.dayStartAt - d.baselineAt > 2 * 60 * 60_000) {
+    const day = new Date(d.baselineAt).toDateString() === new Date(d.dayStartAt).toDateString() ? "" : " yesterday";
+    return `The last reading before ${clock(d.dayStartAt)} was at ${clock(d.baselineAt)}${day}; usage since then counts as today.`;
+  }
+  return null;
+}
+
 function laneHtml(provider, routeLane) {
   const d = provider.daily;
   const weekly = provider.windows.find((w) => w.windowMinutes > 360);
@@ -30,10 +42,12 @@ function laneHtml(provider, routeLane) {
     : "";
   const shareUsed = d && d.todayBudgetPercent > 0 ? Math.round((d.usedTodayPercent / d.todayBudgetPercent) * 100) : null;
   const notes = [
-    shareUsed != null ? `${shareUsed}% of today's ${pct(d.todayBudgetPercent)} share used.` : null,
-    weekly ? `Week resets in ${countdown(weekly.resetsAt)}.` : null,
+    d?.spent ? "Today's share is spent." : shareUsed != null ? `${shareUsed}% of today's ${pct(d.todayBudgetPercent)} share used.` : null,
+    weekly ? (weekly.resetsAt ? `Week resets in ${countdown(weekly.resetsAt)}.` : "Reset time unknown.") : null,
+    baselineNote(d),
     d?.borrowedPercent > 0 ? `${pct(d.borrowedPercent)} borrowed from later days.` : null,
-    routeLane?.reason,
+    // Pace pressure (the stamp) explained in words; the daily figures are above.
+    ["watch", "protect", "queue"].includes(provider.state) && !d?.spent ? provider.reason : null,
   ].filter(Boolean).join(" ");
   return `<article class="lane lane-${esc(provider.provider)}"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>${NAMES[provider.provider]}</span><span class="stamp ${esc(provider.state)}">${esc(provider.state)}</span></div>${today}${week}<p class="note">${esc(notes)}</p></article>`;
 }

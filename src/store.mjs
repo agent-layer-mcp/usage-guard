@@ -239,6 +239,23 @@ export class GuardStore {
     return row ? mapObservation(row) : null;
   }
 
+  earliestObservedAt(provider, windowKey) {
+    const row = this.database.prepare(
+      "SELECT MIN(observed_at) AS first FROM quota_observations WHERE provider = ? AND window_key = ?",
+    ).get(provider, windowKey);
+    return row?.first == null ? null : Number(row.first);
+  }
+
+  // Most recent reset any source reported for this window, past or future.
+  latestKnownReset(provider, windowKey) {
+    const row = this.database.prepare(`
+      SELECT resets_at, used_percent FROM quota_observations
+      WHERE provider = ? AND window_key = ? AND resets_at IS NOT NULL
+      ORDER BY observed_at DESC LIMIT 1
+    `).get(provider, windowKey);
+    return row ? { resetsAt: Number(row.resets_at), usedPercent: Number(row.used_percent) } : null;
+  }
+
   history(provider, windowKey, resetAt, since) {
     if (resetAt == null) {
       return this.database.prepare(`

@@ -1,9 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { guardHome } from "./config.mjs";
 import { buildProviderDecision } from "./policy.mjs";
 
-export const ROUTE_KINDS = Object.freeze(["code", "review", "plan", "bulk"]);
+// Small, checkable jobs that go to Hermes first (docs/hermes-jobs.md).
+export const HERMES_KINDS = Object.freeze([
+  "lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan",
+]);
+export const ROUTE_KINDS = Object.freeze(["code", "review", "plan", "bulk", ...HERMES_KINDS]);
+// Hermes jobs get one retry; after two failed attempts they go to a subscription lane.
+export const HERMES_MAX_ATTEMPTS = 2;
+const ROUTINE_KINDS = new Set(["bulk", "lint-format", "doc-update", "rename-mechanical", "file-scan"]);
 const SUBSCRIPTION_LANES = ["claude", "codex"];
 
 // Pick the lane for the next job. Planning and review stay on Claude while its
@@ -16,7 +23,7 @@ export function routeJob(store, kind, options = {}) {
   if (config.enabled === false) {
     return { kind, lane: "off", disabled: true, reason: "Usage Guard is off.", lanes: [], createdAt: now };
   }
-  const role = { code: "standard", review: "review", plan: "planning", bulk: "routine" }[kind];
+  const role = { review: "review", plan: "planning" }[kind] || (ROUTINE_KINDS.has(kind) ? "routine" : "standard");
   const lanes = SUBSCRIPTION_LANES.map((provider) => subscriptionLane(
     buildProviderDecision(store, provider, { now, config, role }), kind,
   ));
@@ -37,13 +44,18 @@ export function routeJob(store, kind, options = {}) {
       const subscriptions = open.filter((lane) => lane.subscription);
       const best = subscriptions.sort((a, b) => (b.verified - a.verified)
         || b.remainingTodayPercent - a.remainingTodayPercent)[0] || null;
-      const payAsYouGo = kind === "plan" || kind === "review" ? null : open.find((lane) => !lane.subscription) || null;
+      const hermesJob = HERMES_KINDS.includes(kind);
+      const gate = hermesJob ? hermesJobGate(kind, config, options) : null;
+      const payAsYouGo = kind === "plan" || kind === "review" || (gate && !gate.ok) ? null
+        : open.find((lane) => !lane.subscription) || null;
       // With one subscription spent and the other nearly so, use the capped pay-as-you-go lane before
       // squeezing the last of the other's share (a banked reset is only ever spent by the user).
       const nearlyOut = best && subscriptions.length === 1 && best.todayBudgetPercent != null
         && best.remainingTodayPercent < best.todayBudgetPercent * 0.25;
-      choice = (nearlyOut && payAsYouGo) || best || payAsYouGo;
-      reason = !choice ? `No lane has budget for ${kind} work now.${nextShareText(lanes)}`
+      choice = (gate?.ok && payAsYouGo) || (nearlyOut && payAsYouGo) || best || payAsYouGo;
+      reason = gate?.ok && choice === payAsYouGo
+        ? `${kind} goes to ${laneName(choice.lane)} first while it is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
+        : !choice ? `No lane has budget for ${kind} work now.${nextShareText(lanes)}`
         : choice.subscription
           ? choice.verified
             ? choice.hasDailyShare
@@ -53,6 +65,7 @@ export function routeJob(store, kind, options = {}) {
           : best
             ? `${laneName(best.lane)} has under a quarter of today's share left and the other subscription is spent; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
             : `Both subscription lanes have spent today's share; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`;
+      if (gate && !gate.ok && choice) reason = `${gate.reason} ${reason}`;
     }
   }
 
@@ -64,6 +77,7 @@ export function routeJob(store, kind, options = {}) {
     command: choice?.command || null,
     workdir: choice?.workdir || null,
     reason,
+    attempts: options.failedAttempts ?? 0,
     paused: Boolean(config.routingPaused),
     lanes,
     privacy: "Third-party lanes must never receive .env files, secrets, user data or children's data.",
@@ -81,6 +95,28 @@ export function routeJob(store, kind, options = {}) {
   return route;
 }
 
+// Whether a Hermes job kind may go to Hermes first for this repo and attempt count.
+function hermesJobGate(kind, config, options) {
+  if (!config.hermesJobKinds.includes(kind)) return { ok: false, reason: `${kind} is not in hermesJobKinds.` };
+  if ((options.failedAttempts ?? 0) >= HERMES_MAX_ATTEMPTS) {
+    return { ok: false, reason: `Hermes failed ${options.failedAttempts} times; escalating.` };
+  }
+  if (!repoAllowed(options.repo, config.hermesRepos)) {
+    return { ok: false, reason: "This repo is not in hermesRepos, so it cannot use Hermes." };
+  }
+  return { ok: true };
+}
+
+export function repoAllowed(repo, allowed) {
+  if (!repo || !allowed?.length) return false;
+  const real = (value) => { try { return realpathSync(value); } catch { return path.resolve(value); } };
+  const target = real(repo);
+  return allowed.some((entry) => {
+    const root = real(entry);
+    return target === root || target.startsWith(`${root}${path.sep}`);
+  });
+}
+
 function subscriptionLane(decision, kind) {
   const daily = decision.daily;
   // Uncertain meters never block; such a lane only ranks after lanes with fresh readings.
@@ -93,8 +129,8 @@ function subscriptionLane(decision, kind) {
     verified,
     available: !blocked && !spent,
     state: decision.state,
-    model: kind === "bulk" ? decision.routineModel : decision.recommendedModel,
-    effort: kind === "bulk" ? decision.routineEffort : decision.recommendedEffort,
+    model: ROUTINE_KINDS.has(kind) ? decision.routineModel : decision.recommendedModel,
+    effort: ROUTINE_KINDS.has(kind) ? decision.routineEffort : decision.recommendedEffort,
     todayBudgetPercent: daily?.todayBudgetPercent ?? null,
     usedTodayPercent: daily?.usedTodayPercent ?? null,
     // Without a daily share (no reset time yet), fall back to usable weekly percent.

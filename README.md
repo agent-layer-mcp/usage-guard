@@ -300,6 +300,21 @@ the next job:
 - Nothing left: the lane is `wait`, with the time the next daily share starts.
 - `{"routingPaused": true}` stops routing; a banked provider reset is never
   spent automatically.
+- Hermes job kinds (`lint-format`, `test-write`, `test-triage`, `doc-update`,
+  `rename-mechanical`, `file-scan`) go to Hermes first, all day, while it is under
+  the cap, but only for repos listed in `hermesRepos` (none by default). Pass
+  `--repo <path>` (default: the current folder) and `--failed <n>`; after two
+  failed Hermes attempts the job escalates to Claude or Codex. See
+  [docs/hermes-jobs.md](docs/hermes-jobs.md).
+- `usage-guard hermes-job --kind <type> --task-file <file> --repo <path>` runs one
+  such job: it refuses planning and review, tasks that mention secrets, auth,
+  billing, children, Godot or demos, repos not opted in, and repos with committed
+  secret-like files. It runs `hermes` in a scratch worktree of committed files
+  under `~/.usage-guard/jobs/`, keeps the full log there and prints a short
+  summary. Nothing is applied to the repo; review the worktree diff first.
+- `usage-guard test-run -- <command>` runs a test suite with no model, saves the
+  full log in `~/.usage-guard/test-runs/` and prints only failing test names and
+  short errors. It exits with the suite's exit code.
 - Change the Hermes lane with `usage-guard config hermesModel <openrouter-model-id>`
   and `usage-guard config payAsYouGoDailyCapUsd 5`, or in the tray.
 

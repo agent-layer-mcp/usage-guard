@@ -1,6 +1,6 @@
 # Hermes job types (spec)
 
-Status: draft spec, not built. Owner: Ryan. Last reviewed: 2026-10-20.
+Status: route kinds, escalation, `test-run` and `hermes-job` built; review check not built. Owner: Ryan. Last reviewed: 2026-10-20.
 Related: [README routing section](../README.md#routing-jobs-across-providers),
 `src/route.mjs`.
 
@@ -108,5 +108,10 @@ here is the failure mode the research warns about.
 
 ## Not in scope yet
 
-The `test-run` command, the assertion-count check, the worktree checks and the
-new route kinds are not built. Usage Guard stays off until Ryan turns it on.
+Built: the route kinds, `hermesJobKinds`, `hermesRepos`, the two-attempt
+escalation, `usage-guard test-run` and `usage-guard hermes-job` (never-list
+check on the task text, opt-in repo, scratch worktree of committed files,
+secret-file scan). Not built: the assertion-count check and the automatic Claude
+review; the agent does the review step by hand. The task-text check is a keyword
+filter and cannot detect children's data inside the repo; the opt-in list is the
+real guard. `hermes-job` refuses while Usage Guard is off.

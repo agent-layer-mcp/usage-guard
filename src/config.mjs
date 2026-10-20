@@ -50,6 +50,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   payAsYouGoDailyCapUsd: 5,
   // Hermes (OpenRouter) lane model; deepseek-v4.1-flash-1017 was tested on 2026-10-19.
   hermesModel: "deepseek/deepseek-v4.1-flash-1017",
+  // Job kinds that go to Hermes first, and the repos allowed to use it (opt-in, none by default).
+  hermesJobKinds: ["lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan"],
+  hermesRepos: [],
 });
 
 export function guardHome(env = process.env) {
@@ -114,6 +117,10 @@ export function normalizeConfig(input = {}) {
     payAsYouGoDailyCapUsd: clampNumber(merged.payAsYouGoDailyCapUsd, 0, 1000, 5),
     hermesModel: typeof merged.hermesModel === "string" && merged.hermesModel
       ? merged.hermesModel : DEFAULT_CONFIG.hermesModel,
+    hermesJobKinds: Array.isArray(merged.hermesJobKinds)
+      ? merged.hermesJobKinds.filter((kind) => DEFAULT_CONFIG.hermesJobKinds.includes(kind))
+      : [...DEFAULT_CONFIG.hermesJobKinds],
+    hermesRepos: Array.isArray(merged.hermesRepos) ? merged.hermesRepos.filter((repo) => typeof repo === "string") : [],
   };
 }
 
@@ -171,6 +178,11 @@ export const CONFIG_SCHEMA = {
     routingPaused: { type: "boolean" },
     payAsYouGoDailyCapUsd: { type: "number", minimum: 0, maximum: 1000 },
     hermesModel: { type: "string", pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:/~-]{0,127}$" },
+    hermesJobKinds: {
+      type: "array", maxItems: 6,
+      items: { type: "string", enum: ["lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan"] },
+    },
+    hermesRepos: { type: "array", maxItems: 50, items: { type: "string", pattern: "^/", maxLength: 1024 } },
   },
 };
 

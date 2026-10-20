@@ -31,6 +31,8 @@ import {
 } from "../src/service.mjs";
 import { GuardStore } from "../src/store.mjs";
 import { readOpenRouterSpend, routeJob } from "../src/route.mjs";
+import { formatHermesJob, HermesJobRefused, runHermesJob } from "../src/hermes-job.mjs";
+import { formatTestRun, runTests } from "../src/test-run.mjs";
 
 const cliPath = fileURLToPath(import.meta.url);
 const packageRoot = path.resolve(path.dirname(cliPath), "..");
@@ -167,10 +169,41 @@ try {
     const kind = stringOption(args, "--kind") || "code";
     await bestEffortProviderSyncs();
     ingestClaudeUsageOverride(args);
-    const route = routeJob(store, kind, { payAsYouGo: await readOpenRouterSpend() });
+    const route = routeJob(store, kind, {
+      payAsYouGo: await readOpenRouterSpend(),
+      repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
+      failedAttempts: numberOption(args, "--failed") ?? 0,
+    });
     console.log(args.includes("--json") ? JSON.stringify(route, null, 2) : formatRoute(route));
     store.close();
     if (route.disabled) process.exitCode = 3; // Callers fall back to their own rules.
+  } else if (command === "test-run") {
+    const split = args.indexOf("--");
+    const run = runTests(split >= 0 ? args.slice(split + 1) : []);
+    console.log(args.slice(0, Math.max(split, 0)).includes("--json") ? JSON.stringify(run, null, 2) : formatTestRun(run));
+    store.close();
+    process.exitCode = run.exitCode;
+  } else if (command === "hermes-job") {
+    const kind = stringOption(args, "--kind");
+    const taskFile = stringOption(args, "--task-file");
+    if (!kind || !taskFile) throw new Error("hermes-job needs --kind <type> and --task-file <file>.");
+    await bestEffortProviderSyncs();
+    try {
+      const summary = runHermesJob(store, {
+        kind, taskFile,
+        repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
+        failedAttempts: numberOption(args, "--failed") ?? 0,
+        payAsYouGo: await readOpenRouterSpend(),
+      });
+      console.log(args.includes("--json") ? JSON.stringify(summary, null, 2) : formatHermesJob(summary));
+      if (!summary.ok) process.exitCode = 1;
+    } catch (error) {
+      if (!(error instanceof HermesJobRefused)) throw error;
+      console.error(`Refused: ${error.message}`);
+      process.exitCode = 2;
+    } finally {
+      store.close();
+    }
   } else if (command === "enable" || command === "disable") {
     const enabled = command === "enable";
     store.setConfig({ enabled });
@@ -510,6 +543,12 @@ Commands:
   enable | disable              Master switch: hooks, monitor and routing on or off
   route [--kind code|review|plan|bulk] [--json] [--claude-used <pct> --claude-hours <h> [--claude-5h <pct>]]
                                 Pick the lane (Claude, Codex, Hermes/OpenRouter) for the next job
+                                Hermes kinds: lint-format test-write test-triage doc-update rename-mechanical file-scan
+                                [--repo <path>] [--failed <n>] (n failed Hermes attempts; 2 escalates)
+  test-run [--json] -- <command>
+                                Run tests with no model; print only failures, keep the full log
+  hermes-job --kind <type> --task-file <file> [--repo <path>] [--failed <n>] [--json]
+                                Run one Hermes job in a scratch worktree, if every rule allows it
   monitor [--once] [--provider claude|codex|all]
                                 Monitor usage and show desktop alerts (macOS, Linux)
   screenshot-memory status      Show local image-expiry savings

@@ -205,12 +205,15 @@ the next job:
   They never go to a pay-as-you-go lane.
 - `code` and `bulk` go to the subscription lane with the most daily share left.
   When one subscription is spent and the other has under a quarter of today's
-  share left, or both are spent, a pay-as-you-go lane (DeepSeek through
-  OpenRouter) takes the job while it is under `payAsYouGoDailyCapUsd` (default
-  `$5`). That lane needs `OPENROUTER_API_KEY`; today's spend is read from
+  share left, or both are spent, the pay-as-you-go Hermes (OpenRouter) lane
+  takes the job with `hermesModel` while it is under `payAsYouGoDailyCapUsd` (default
+  `$5`). That lane needs `OPENROUTER_API_KEY` (or the same line in
+  `~/.usage-guard/openrouter.env`, which you write yourself); today's spend is read from
   OpenRouter's key endpoint (UTC day). The route gives the Hermes command to
   run it with (`hermes -p dstest --provider openrouter ...`), a profile that pins
-  hosts and denies data collection.
+  hosts and denies data collection, and says to run it from a scratch directory
+  or worktree. The tray's model picker lists OpenRouter models that support tool
+  calling, with prices and context length (`GET /api/models`, cached a day).
 - Nothing left: the lane is `wait`, with the time the next daily share starts.
 - `{"routingPaused": true}` stops routing; a banked provider reset is never
   spent automatically.

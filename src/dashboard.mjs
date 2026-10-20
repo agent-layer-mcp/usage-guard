@@ -1,4 +1,5 @@
 import http from "node:http";
+import { listOpenRouterModels } from "./openrouter-models.mjs";
 import { readOpenRouterSpend, routeJob } from "./route.mjs";
 import { completeStatus, syncCodex } from "./service.mjs";
 
@@ -24,6 +25,9 @@ export function startDashboard(store, options = {}) {
           record: false,
           payAsYouGo: await readSpend(),
         }));
+      }
+      if (request.method === "GET" && url.pathname === "/api/models") {
+        return json(response, 200, await (options.listModels || listOpenRouterModels)({ refresh: url.searchParams.has("refresh") }));
       }
       if (request.method === "POST" && url.pathname === "/api/sync/codex") {
         await syncCodex(store);

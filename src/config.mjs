@@ -48,7 +48,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
   routingPaused: false,
   payAsYouGoDailyCapUsd: 5,
-  payAsYouGoModel: "deepseek/deepseek-v4.1-flash-1017",
+  // Hermes (OpenRouter) lane model; deepseek-v4.1-flash-1017 was tested on 2026-10-19.
+  hermesModel: "deepseek/deepseek-v4.1-flash-1017",
 });
 
 export function guardHome(env = process.env) {
@@ -111,8 +112,8 @@ export function normalizeConfig(input = {}) {
     enabled: merged.enabled !== false,
     routingPaused: merged.routingPaused === true,
     payAsYouGoDailyCapUsd: clampNumber(merged.payAsYouGoDailyCapUsd, 0, 1000, 5),
-    payAsYouGoModel: typeof merged.payAsYouGoModel === "string" && merged.payAsYouGoModel
-      ? merged.payAsYouGoModel : DEFAULT_CONFIG.payAsYouGoModel,
+    hermesModel: typeof merged.hermesModel === "string" && merged.hermesModel
+      ? merged.hermesModel : DEFAULT_CONFIG.hermesModel,
   };
 }
 
@@ -169,7 +170,7 @@ export const CONFIG_SCHEMA = {
     enabled: { type: "boolean" },
     routingPaused: { type: "boolean" },
     payAsYouGoDailyCapUsd: { type: "number", minimum: 0, maximum: 1000 },
-    payAsYouGoModel: { type: "string", pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$" },
+    hermesModel: { type: "string", pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:/~-]{0,127}$" },
   },
 };
 

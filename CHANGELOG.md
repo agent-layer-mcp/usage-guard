@@ -10,10 +10,12 @@
   and Claude Desktop cache ingestion from `~/.config/Claude`.
 - `monitor --provider all` checks both providers in one run.
 - `usage-guard route --kind code|review|plan|bulk` chooses Claude, Codex or a
-  capped pay-as-you-go DeepSeek lane from each lane's daily share; planning
-  and review stay on Claude. New settings: `routingPaused`,
-  `payAsYouGoDailyCapUsd` (default 5), `payAsYouGoModel`. The dashboard serves
-  `GET /api/route` previews.
+  capped pay-as-you-go Hermes (OpenRouter) lane from each lane's daily share;
+  planning and review stay on Claude. New settings: `routingPaused`,
+  `payAsYouGoDailyCapUsd` (default 5), `hermesModel` (default
+  `deepseek/deepseek-v4.1-flash-1017`). The dashboard serves `GET /api/route`
+  previews and `GET /api/models` (OpenRouter tool-calling models, cached a day);
+  the tray has a model picker and cap setting.
 - Master switch: `usage-guard enable|disable` (setting `enabled`). Off makes
   hooks silent, the monitor idle, `route` a passthrough (exit 3) and the status
   line `UG off`. `install --disabled --no-integrations` installs inert; on Linux

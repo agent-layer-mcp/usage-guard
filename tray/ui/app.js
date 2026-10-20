@@ -2,7 +2,7 @@
 const { invoke } = window.__TAURI__.core;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const NAMES = { claude: "Claude", codex: "Codex", deepseek: "DeepSeek" };
+const NAMES = { claude: "Claude", codex: "Codex", hermes: "Hermes" };
 const pct = (value) => `${Number(value).toFixed(1)}%`;
 
 function countdown(at) {
@@ -44,7 +44,7 @@ function payAsYouGoHtml(lane) {
   const row = spent == null
     ? `<div class="row"><span>today</span>${bar(0)}<span>—</span></div>`
     : `<div class="row"><span>today</span>${bar(spent / lane.dailyCapUsd, 0, spent >= lane.dailyCapUsd)}<span>$${spent.toFixed(2)} / $${lane.dailyCapUsd}</span></div>`;
-  return `<article class="lane"><div class="lane-head"><span>DeepSeek</span><span class="state ${lane.available ? "safe" : "stale"}">${lane.available ? "open" : "closed"}</span></div>${row}<p class="note">${esc(lane.reason)}</p></article>`;
+  return `<article class="lane"><div class="lane-head"><span>Hermes (OpenRouter)</span><span class="state ${lane.available ? "safe" : "stale"}">${lane.available ? "open" : "closed"}</span></div>${row}<p class="note">${esc(lane.reason)}</p></article>`;
 }
 
 function trayLabel(status, route) {
@@ -53,8 +53,8 @@ function trayLabel(status, route) {
     const share = d && d.todayBudgetPercent > 0 ? `${Math.round((d.usedTodayPercent / d.todayBudgetPercent) * 100)}%` : "–";
     return `${NAMES[p.provider][0]} ${share}`;
   });
-  const deepseek = route.lanes.find((l) => l.lane === "deepseek");
-  if (deepseek?.spentTodayUsd != null) parts.push(`D $${deepseek.spentTodayUsd.toFixed(2)}`);
+  const hermes = route.lanes.find((l) => l.lane === "hermes");
+  if (hermes?.spentTodayUsd != null) parts.push(`H $${hermes.spentTodayUsd.toFixed(2)}`);
   return (route.paused ? "⏸ " : "") + parts.join(" · ");
 }
 
@@ -66,7 +66,9 @@ async function refresh() {
     ]);
     $("error").hidden = true;
     const lanes = Object.fromEntries(route.lanes.map((lane) => [lane.lane, lane]));
-    $("lanes").innerHTML = status.providers.map((p) => laneHtml(p, lanes[p.provider])).join("") + payAsYouGoHtml(lanes.deepseek);
+    $("lanes").innerHTML = status.providers.map((p) => laneHtml(p, lanes[p.provider])).join("") + payAsYouGoHtml(lanes.hermes);
+    $("hermes-model").textContent = status.config.hermesModel;
+    if (document.activeElement !== $("cap")) $("cap").value = status.config.payAsYouGoDailyCapUsd;
     $("route-lane").textContent = route.lane === "wait" ? "Wait" : `${NAMES[route.lane] || route.lane}${route.model ? ` · ${route.model}` : ""}`;
     $("route-reason").textContent = route.reason;
     $("pause").checked = Boolean(status.config.routingPaused);
@@ -89,8 +91,40 @@ $("enabled").addEventListener("change", async (event) => {
   try { await invoke("set_enabled", { enabled: event.target.checked }); } catch (error) { $("error").textContent = String(error); $("error").hidden = false; }
   refresh();
 });
+let models = [];
+const money = (value) => (value == null ? "?" : `$${value}`);
+function renderModels() {
+  const query = $("model-search").value.trim().toLowerCase();
+  const shown = models.filter((m) => !query || m.id.toLowerCase().includes(query) || m.name.toLowerCase().includes(query)).slice(0, 200);
+  $("model-list").innerHTML = shown.map((m) => `<option value="${esc(m.id)}">${esc(m.name)} — ${money(m.inputPerMillionUsd)} / ${money(m.outputPerMillionUsd)} per M · ${m.contextLength ? Math.round(m.contextLength / 1000) + "k" : "?"} context</option>`).join("");
+}
+async function loadModels(refresh = false) {
+  try {
+    const list = JSON.parse(await invoke("guard_models", { refresh }));
+    models = list.models;
+    renderModels();
+    if (list.stale) $("model-hint").dataset.stale = "1";
+  } catch (error) { $("error").textContent = String(error); $("error").hidden = false; }
+}
+$("model-search").addEventListener("input", renderModels);
+$("model-refresh").addEventListener("click", () => loadModels(true));
+$("model-use").addEventListener("click", async () => {
+  const id = $("model-list").value;
+  if (!id) return;
+  try { await invoke("set_config", { patch: { hermesModel: id } }); } catch (error) { $("error").textContent = String(error); $("error").hidden = false; }
+  refresh();
+});
+$("model-list").addEventListener("dblclick", () => $("model-use").click());
+$("cap-save").addEventListener("click", async () => {
+  const value = Number($("cap").value);
+  if (!Number.isFinite(value) || value < 0) return;
+  try { await invoke("set_config", { patch: { payAsYouGoDailyCapUsd: value } }); } catch (error) { $("error").textContent = String(error); $("error").hidden = false; }
+  refresh();
+});
+loadModels();
+
 $("pause").addEventListener("change", async (event) => {
-  try { await invoke("set_paused", { paused: event.target.checked }); } catch (error) { $("error").textContent = String(error); $("error").hidden = false; }
+  try { await invoke("set_config", { patch: { routingPaused: event.target.checked } }); } catch (error) { $("error").textContent = String(error); $("error").hidden = false; }
   refresh();
 });
 $("banked").addEventListener("click", () => {

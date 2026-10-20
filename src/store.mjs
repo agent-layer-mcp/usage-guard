@@ -397,6 +397,8 @@ export class GuardStore {
         stored[row.key] = row.value;
       }
     }
+    // 0.6 renamed payAsYouGoModel to hermesModel.
+    if (stored.hermesModel == null && typeof stored.payAsYouGoModel === "string") stored.hermesModel = stored.payAsYouGoModel;
     return normalizeConfig({ ...DEFAULT_CONFIG, ...stored });
   }
 

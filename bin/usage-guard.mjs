@@ -274,7 +274,8 @@ function formatRoute(route) {
     lines.push(`  ${lane.lane.padEnd(9)} ${lane.available ? "open  " : "closed"} ${share}  ${lane.reason}`);
   }
   if (route.command) lines.push(`run: ${route.command}`);
-  if (route.lane === "deepseek") lines.push(`note: ${route.privacy}`);
+  if (route.workdir) lines.push(`where: ${route.workdir}`);
+  if (route.lane === "hermes") lines.push(`note: ${route.privacy}`);
   return lines.join("\n");
 }
 
@@ -488,7 +489,7 @@ Commands:
   mcp                           Run the local MCP server over stdio
   enable | disable              Master switch: hooks, monitor and routing on or off
   route [--kind code|review|plan|bulk] [--json] [--claude-used <pct> --claude-hours <h> [--claude-5h <pct>]]
-                                Pick the lane (Claude, Codex, DeepSeek) for the next job
+                                Pick the lane (Claude, Codex, Hermes/OpenRouter) for the next job
   monitor [--once] [--provider claude|codex|all]
                                 Monitor usage and show desktop alerts (macOS, Linux)
   screenshot-memory status      Show local image-expiry savings

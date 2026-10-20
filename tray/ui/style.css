@@ -19,3 +19,8 @@ main{padding:16px 22px 24px}h2{font:600 12px var(--mono);text-transform:uppercas
 .banked button:focus-visible,.pause input:focus-visible{outline:2px solid var(--seal);outline-offset:2px}.banked p{color:var(--muted);font-size:13px}
 .off{background:var(--tint);border-left:3px solid var(--warn);padding:8px 10px;margin:0 0 10px}
 main>.pause{margin-bottom:6px}body.is-off #lanes,body.is-off .route{opacity:.45}
+.hermes label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}.hermes .current{margin:0}
+.hermes input,.hermes select{font:inherit;width:100%;padding:6px 8px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:6px}
+.hermes select{font:13px/1.6 var(--mono);margin-top:6px}.hermes .actions{display:flex;gap:8px;margin-top:8px}.hermes .actions input{width:120px}
+.hermes button{font:inherit;padding:6px 12px;border:1px solid var(--line);background:var(--tint);color:var(--ink);border-radius:6px;cursor:pointer}
+.hermes .hint{color:var(--muted);font-size:12.5px}.hermes button:focus-visible,.hermes input:focus-visible,.hermes select:focus-visible{outline:2px solid var(--seal);outline-offset:2px}

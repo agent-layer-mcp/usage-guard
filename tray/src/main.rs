@@ -55,8 +55,18 @@ fn guard_route(kind: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn set_paused(paused: bool) -> Result<String, String> {
-    request("PATCH", "/api/config", Some(&serde_json::json!({ "routingPaused": paused }).to_string()))
+fn guard_models(refresh: bool) -> Result<String, String> {
+    request("GET", if refresh { "/api/models?refresh=1" } else { "/api/models" }, None)
+}
+
+// Only the settings the panel edits may be changed from here.
+#[tauri::command]
+fn set_config(patch: serde_json::Map<String, serde_json::Value>) -> Result<String, String> {
+    const ALLOWED: [&str; 3] = ["routingPaused", "hermesModel", "payAsYouGoDailyCapUsd"];
+    if patch.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
+        return Err("That setting cannot be changed from the tray".into());
+    }
+    request("PATCH", "/api/config", Some(&serde_json::Value::Object(patch).to_string()))
 }
 
 // Runs `usage-guard enable|disable` with the runtime recorded at install, so the
@@ -150,7 +160,7 @@ fn toggle_panel(app: &AppHandle) {
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![guard_status, guard_route, set_paused, set_enabled, set_tray_label, open_codex_usage])
+        .invoke_handler(tauri::generate_handler![guard_status, guard_route, guard_models, set_config, set_enabled, set_tray_label, open_codex_usage])
         .setup(|app| {
             let switch = MenuItem::with_id(app, "switch", "Turn Usage Guard on/off", true, None::<&str>)?;
             let details = MenuItem::with_id(app, "details", "Show details", true, None::<&str>)?;

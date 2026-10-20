@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { guardHome } from "./config.mjs";
 import { buildProviderDecision } from "./policy.mjs";
 
 export const ROUTE_KINDS = Object.freeze(["code", "review", "plan", "bulk"]);
@@ -17,7 +20,7 @@ export function routeJob(store, kind, options = {}) {
   const lanes = SUBSCRIPTION_LANES.map((provider) => subscriptionLane(
     buildProviderDecision(store, provider, { now, config, role }), kind,
   ));
-  lanes.push(payAsYouGoLane(config, options.payAsYouGo));
+  lanes.push(hermesLane(config, options.payAsYouGo));
 
   let choice = null;
   let reason;
@@ -55,6 +58,7 @@ export function routeJob(store, kind, options = {}) {
     model: choice?.model || null,
     effort: choice?.effort || null,
     command: choice?.command || null,
+    workdir: choice?.workdir || null,
     reason,
     paused: Boolean(config.routingPaused),
     lanes,
@@ -98,24 +102,25 @@ function subscriptionLane(decision, kind) {
   };
 }
 
-function payAsYouGoLane(config, spend) {
+function hermesLane(config, spend) {
   const cap = config.payAsYouGoDailyCapUsd;
   const configured = Boolean(spend?.configured);
   const spentUsd = Number.isFinite(spend?.spentTodayUsd) ? spend.spentTodayUsd : null;
   const available = configured && cap > 0 && spentUsd != null && spentUsd < cap;
   return {
-    lane: "deepseek",
+    lane: "hermes",
     subscription: false,
     available,
     state: available ? "safe" : "unavailable",
-    model: config.payAsYouGoModel,
+    model: config.hermesModel,
     effort: null,
     // The dstest Hermes profile pins OpenRouter hosts and denies data collection; keep jobs on it.
-    command: `hermes -p dstest --provider openrouter -m ${config.payAsYouGoModel} -z "<task>"`,
+    command: `hermes -p dstest --provider openrouter -m ${config.hermesModel} -z "<task>"`,
+    workdir: "Run it from a scratch directory or a git worktree, never from a folder holding .env files or user data.",
     spentTodayUsd: spentUsd,
     dailyCapUsd: cap,
     remainingTodayUsd: spentUsd == null ? null : Math.max(0, cap - spentUsd),
-    reason: !configured ? "No OpenRouter API key is set."
+    reason: !configured ? "No OpenRouter API key: set OPENROUTER_API_KEY or put it in ~/.usage-guard/openrouter.env."
       : spentUsd == null ? "OpenRouter spend could not be read."
         : available ? "Under today's cap." : "Today's cap is spent.",
   };
@@ -124,7 +129,7 @@ function payAsYouGoLane(config, spend) {
 // Reads today's spend for the key from OpenRouter's documented key endpoint.
 export async function readOpenRouterSpend(options = {}) {
   const env = options.env || process.env;
-  const key = env.OPENROUTER_API_KEY;
+  const key = env.OPENROUTER_API_KEY || readKeyFile(path.join(guardHome(env), "openrouter.env"));
   if (!key) return { configured: false };
   try {
     const response = await (options.fetch || fetch)("https://openrouter.ai/api/v1/key", {
@@ -141,11 +146,18 @@ export async function readOpenRouterSpend(options = {}) {
   }
 }
 
+// A KEY=value file the user writes themselves (chmod 600); only OPENROUTER_API_KEY is read.
+function readKeyFile(file) {
+  if (!existsSync(file)) return null;
+  const match = readFileSync(file, "utf8").match(/^\s*(?:export\s+)?OPENROUTER_API_KEY\s*=\s*["']?([^"'\s]+)/m);
+  return match ? match[1] : null;
+}
+
 function nextShareText(lanes) {
   const next = lanes.map((lane) => lane.nextDayAt).filter(Number.isFinite);
   return next.length ? ` The next daily share starts at ${new Date(Math.min(...next)).toISOString()}.` : "";
 }
 
 function laneName(lane) {
-  return { claude: "Claude", codex: "Codex", deepseek: "DeepSeek (OpenRouter)" }[lane] || lane;
+  return { claude: "Claude", codex: "Codex", hermes: "Hermes (OpenRouter)" }[lane] || lane;
 }

@@ -20,6 +20,20 @@
       <h2>Next job goes to</h2>
       <div class="choice"><strong id="route-lane">…</strong><p id="route-reason"></p></div>
     </section>
+    <section class="hermes">
+      <h2>Hermes (OpenRouter) lane</h2>
+      <p class="current">Model: <strong id="hermes-model">…</strong></p>
+      <label for="model-search">Find a model (tool-calling models only)</label>
+      <input type="search" id="model-search" placeholder="Search by name or id, e.g. deepseek, qwen, kimi">
+      <select id="model-list" size="8" aria-label="OpenRouter models"></select>
+      <div class="actions">
+        <button type="button" id="model-use">Use this model</button>
+        <button type="button" id="model-refresh">Refresh list</button>
+      </div>
+      <p class="hint" id="model-hint">Prices are US$ per million input / output tokens. Jobs run through the Hermes dstest profile, which pins hosts and denies data collection; a model that profile's hosts don't serve will fail.</p>
+      <label for="cap">Daily spend cap (US$)</label>
+      <div class="actions"><input type="number" id="cap" min="0" max="1000" step="0.5"><button type="button" id="cap-save">Save cap</button></div>
+    </section>
     <section>
       <h2>Recent decisions</h2>
       <ol id="decisions" class="decisions"></ol>

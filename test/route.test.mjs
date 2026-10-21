@@ -207,3 +207,24 @@ test("when both or neither lane is over pace, the most share left wins", (t) => 
   assert.doesNotMatch(route.reason, /on pace/);
   assert.equal(routeJob(fixture(t, { claude: [59, 60], codex: [40, 41] }), "code", { now: NOW, record: false }).lane, "codex");
 });
+
+test("under half a point left counts as spent, so the next job moves on", (t) => {
+  // Codex: 13.0 of 13.3 pts used (0.3 left). Claude has share left.
+  const store = fixture(t, { claude: [59, 61], codex: [55, 68.04] });
+  const codex = routeJob(store, "code", { now: NOW, payAsYouGo: hermes(0), record: false }).lanes.find((l) => l.lane === "codex");
+  assert.ok(codex.remainingTodayPercent < 0.5 && codex.remainingTodayPercent > 0, String(codex.remainingTodayPercent));
+  assert.equal(codex.available, false);
+  assert.match(codex.reason, /^Today's share is spent/);
+});
+
+test("a stale lane keeps its last known share but ranks after a fresh one", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  const later = NOW + 60 * 60_000;
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: RESET }] });
+  const route = routeJob(store, "code", { now: later, payAsYouGo: hermes(0), record: false });
+  const claude = route.lanes.find((l) => l.lane === "claude");
+  assert.equal(claude.verified, false);
+  assert.ok(claude.todayBudgetPercent > 0); // last known share kept
+  assert.equal(route.lane, "codex");
+});

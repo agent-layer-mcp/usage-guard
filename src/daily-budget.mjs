@@ -1,4 +1,5 @@
 const DAY = 24 * 60 * 60_000;
+const SPENT_MARGIN_PERCENT = 0.5;
 
 // Most recent local day boundary (e.g. 08:00) at or before `now`.
 export function dayStartAt(now, config = {}) {
@@ -54,7 +55,8 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
     borrowedPercent: Math.max(0, usedTodayPercent - todayBudgetPercent),
     // Positive: unspent budget from earlier days rolled into today.
     rolledForwardPercent: todayBudgetPercent - (100 - reserve) / (window.windowMinutes / 1440),
-    spent: usedTodayPercent >= todayBudgetPercent,
+    // Meters report whole percents, so under half a point left counts as spent.
+    spent: todayBudgetPercent - usedTodayPercent < SPENT_MARGIN_PERCENT,
     baselineEstimated,
     baselineAt,
   };

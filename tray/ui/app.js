@@ -1,5 +1,5 @@
 // Panel for the Usage Guard tray. All data comes through the app's own Rust commands.
-import { hermesText, paceText, statusPill, todayText, weeklyWindow, weekText } from "./format.js";
+import { hermesText, staleText, paceText, statusPill, todayText, weeklyWindow, weekText } from "./format.js";
 
 const { invoke } = window.__TAURI__.core;
 const $ = (id) => document.getElementById(id);
@@ -33,7 +33,7 @@ function laneHtml(provider, paused) {
   const weekly = weeklyWindow(provider);
   const today = todayText(d);
   const week = weekText(weekly);
-  const notes = [baselineNote(d), provider.state === "queue" ? provider.reason : paceText(provider)].filter(Boolean).join(" ");
+  const notes = [staleText(provider), baselineNote(d), provider.state === "queue" ? provider.reason : paceText(provider)].filter(Boolean).join(" ");
   return `<article class="lane lane-${esc(provider.provider)}"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>${NAMES[provider.provider]}</span>${pill(statusPill(provider, { paused }))}</div>`
     + metric("today", bar(d && d.todayBudgetPercent ? d.usedTodayPercent / d.todayBudgetPercent : 0, 0, d?.spent), today.figure, today.detail)
     + (week ? metric("week", bar(weekly.usedPercent / 100, (weekly.reservePercent ?? 0) / 100), week.figure, week.detail) : "")

@@ -81,6 +81,9 @@ export function buildProviderDecision(store, provider, options = {}) {
       qualityLocked: config.qualityLock,
       blocked: false,
       stale: true,
+      // The last known share, shown as such; a stale lane still ranks after fresh ones.
+      daily: windows.find((window) => window.daily)?.daily || null,
+      lastReadingAt: newest,
       resetAt: soonestReset(windows),
       createdAt: now,
       windows,

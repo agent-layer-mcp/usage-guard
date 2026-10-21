@@ -37,6 +37,14 @@ export function todayText(daily) {
   };
 }
 
+// A stale lane keeps its last known figures, labelled with their age.
+export function staleText(provider, now = Date.now()) {
+  if (!provider.stale || !provider.lastReadingAt) return null;
+  const at = new Date(provider.lastReadingAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const name = provider.provider === "claude" ? "Claude" : "Codex";
+  return `Figures are from the last reading at ${at} (${countdown(now + (now - provider.lastReadingAt), now)} ago). ${name} gets new work only after lanes with fresh readings; open the ${name} app to refresh it.`;
+}
+
 // Week row: whole-week percentages, with the kept reserve called out.
 export function weekText(window, now = Date.now()) {
   if (!window) return null;

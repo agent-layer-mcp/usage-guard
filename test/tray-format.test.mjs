@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { countdown, hermesText, paceText, statusPill, todayText, weekText } from "../tray/ui/format.js";
+import { countdown, hermesText, paceText, staleText, statusPill, todayText, weekText } from "../tray/ui/format.js";
 
 const NOW = Date.UTC(2026, 9, 21, 0, 0);
 const daily = { usedTodayPercent: 2, todayBudgetPercent: 13.1, remainingTodayPercent: 11.1, borrowedPercent: 0, spent: false };
@@ -49,4 +49,11 @@ test("Hermes shows dollars spent against the cap", () => {
   assert.match(open.detail, /^\$0\.40 spent today · \$4\.60 left\./);
   assert.equal(hermesText({ available: false, spentTodayUsd: 5.2, dailyCapUsd: 5 }).pill, "Cap reached");
   assert.equal(hermesText({ available: false, spentTodayUsd: null, reason: "No key." }).pill, "Not set up");
+});
+
+test("a stale lane says how old its figures are", () => {
+  const now = Date.UTC(2026, 9, 21, 8, 10);
+  const text = staleText({ provider: "claude", stale: true, lastReadingAt: now - (4 * 60 + 14) * 60_000 }, now);
+  assert.match(text, /^Figures are from the last reading at .+ \(4h 14m ago\)\. Claude gets new work only after lanes with fresh readings/);
+  assert.equal(staleText({ provider: "codex", stale: false }), null);
 });

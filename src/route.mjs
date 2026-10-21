@@ -10,6 +10,7 @@ export const HERMES_KINDS = Object.freeze([
 export const ROUTE_KINDS = Object.freeze(["code", "review", "plan", "bulk", ...HERMES_KINDS]);
 // Hermes jobs get one retry; after two failed attempts they go to a subscription lane.
 export const HERMES_MAX_ATTEMPTS = 2;
+const OVER_PACE_RATIO = 1.3; // matches the pace protect threshold in policy.mjs
 const ROUTINE_KINDS = new Set(["bulk", "lint-format", "doc-update", "rename-mechanical", "file-scan"]);
 const SUBSCRIPTION_LANES = ["claude", "codex"];
 
@@ -46,8 +47,12 @@ export function routeJob(store, kind, options = {}) {
     } else {
       // Third-party lanes never take planning or review, and only take work once both subscriptions are spent.
       const subscriptions = open.filter((lane) => lane.subscription);
+      // Both have share: the lane on pace goes first, so an over-pace lane cools off.
       const best = subscriptions.sort((a, b) => (b.verified - a.verified)
+        || (a.overPace - b.overPace)
         || b.remainingTodayPercent - a.remainingTodayPercent)[0] || null;
+      const passedOver = subscriptions.find((lane) => lane !== best && lane.overPace && best && !best.overPace
+        && lane.remainingTodayPercent > best.remainingTodayPercent);
       const hermesJob = HERMES_KINDS.includes(kind);
       const gate = hermesJob ? hermesJobGate(kind, config, options) : null;
       const payAsYouGo = kind === "plan" || kind === "review" || (gate && !gate.ok) ? null
@@ -69,6 +74,9 @@ export function routeJob(store, kind, options = {}) {
           : best
             ? `${laneName(best.lane)} has under a quarter of today's share left and the other subscription is spent; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
             : `Both subscription lanes have spent today's share; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`;
+      if (passedOver && choice === best) {
+        reason = `Preferred the lane on pace: ${laneName(passedOver.lane)} is over pace (${passedOver.paceRatio.toFixed(1)}x), so ${laneName(best.lane)} takes it with ${best.remainingTodayPercent.toFixed(1)} pts left today.`;
+      }
       if (gate && !gate.ok && choice) reason = `${gate.reason} ${reason}`;
       if (codexFirst) reason = `${codexFirst.reason} ${reason}`;
     }
@@ -159,6 +167,9 @@ function subscriptionLane(decision, kind) {
       : verified ? Math.min(...decision.windows.map((window) => window.usablePercent ?? 0), 100) : 0,
     nextDayAt: daily?.nextDayAt ?? null,
     weeklyLeftPercent: weeklyWindow(decision.windows)?.remainingPercent ?? null,
+    // Over pace: the weekly pace warning is active (1.3x+ the steady rate over 3+ hours).
+    paceRatio: weeklyWindow(decision.windows)?.paceRatio ?? null,
+    overPace: (weeklyWindow(decision.windows)?.paceRatio ?? 0) >= OVER_PACE_RATIO,
     reason: laneReason(decision, { blocked, spent, verified }),
   };
 }

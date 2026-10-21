@@ -188,3 +188,22 @@ test("codexFirstUntilLeftPercent accepts 0-100 or null", (t) => {
   store.setConfig({ codexFirstUntilLeftPercent: 70 });
   assert.equal(store.getConfig().codexFirstUntilLeftPercent, 70);
 });
+
+test("with share on both, code goes to the lane on pace and says so", (t) => {
+  // Codex has more share left (12.3 vs 10.0 pts) but burned 6 pts in 4 hours (about 2x pace).
+  const store = fixture(t, { claude: [59, 61], codex: [40, 46] });
+  for (const kind of ["code", "bulk"]) {
+    const route = routeJob(store, kind, { now: NOW, payAsYouGo: hermes(0), record: false });
+    assert.equal(route.lane, "claude", kind);
+    assert.match(route.reason, /^Preferred the lane on pace: Codex is over pace \(\d\.\dx\), so Claude takes it with 10\.0 pts left today\./);
+  }
+  assert.equal(routeJob(store, "plan", { now: NOW, record: false }).lane, "claude");
+});
+
+test("when both or neither lane is over pace, the most share left wins", (t) => {
+  const both = fixture(t, { claude: [59, 63], codex: [40, 46] });
+  const route = routeJob(both, "code", { now: NOW, payAsYouGo: hermes(0), record: false });
+  assert.equal(route.lane, "codex");
+  assert.doesNotMatch(route.reason, /on pace/);
+  assert.equal(routeJob(fixture(t, { claude: [59, 60], codex: [40, 41] }), "code", { now: NOW, record: false }).lane, "codex");
+});

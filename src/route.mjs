@@ -61,7 +61,9 @@ export function routeJob(store, kind, options = {}) {
       // squeezing the last of the other's share (a banked reset is only ever spent by the user).
       const nearlyOut = best && subscriptions.length === 1 && best.todayBudgetPercent != null
         && best.remainingTodayPercent < best.todayBudgetPercent * 0.25;
-      choice = (gate?.ok && payAsYouGo) || (nearlyOut && payAsYouGo) || best || payAsYouGo;
+      // Routine work skips a lane with no fresh reading when the capped pay-as-you-go lane is open.
+      const staleRoutine = best && !best.verified && ROUTINE_KINDS.has(kind);
+      choice = (gate?.ok && payAsYouGo) || ((nearlyOut || staleRoutine) && payAsYouGo) || best || payAsYouGo;
       reason = gate?.ok && choice === payAsYouGo
         ? `${kind} goes to ${laneName(choice.lane)} first while it is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
         : !choice ? `No lane has budget for ${kind} work now.${nextShareText(lanes)}`
@@ -70,7 +72,9 @@ export function routeJob(store, kind, options = {}) {
             ? choice.hasDailyShare
               ? `${laneName(choice.lane)} has the most daily share left (${choice.remainingTodayPercent.toFixed(1)} pts left today).`
               : `${laneName(choice.lane)} has ${choice.remainingTodayPercent.toFixed(1)}% of the week left; its daily share is unknown until a reset time is known.`
-            : `${laneName(choice.lane)} has no fresh usage reading, so its share is unknown; no other lane has share left.`
+            : `${laneName(choice.lane)} has no fresh reading${choice.hasDailyShare ? ` (last reading: ${choice.remainingTodayPercent.toFixed(1)} pts left today)` : ""}; no lane with a fresh reading has share left.`
+          : staleRoutine
+            ? `${laneName(best.lane)} has no fresh reading, so routine work goes to ${laneName(choice.lane)}, under its $${config.payAsYouGoDailyCapUsd} daily cap.`
           : best
             ? `${laneName(best.lane)} has under a quarter of today's share left and the other subscription is spent; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
             : `Both subscription lanes have spent today's share; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`;
@@ -187,7 +191,10 @@ function laneReason(decision, { blocked, spent, verified }) {
   if (spent) {
     return `Today's share is spent${daily.borrowedPercent > 0 ? `, ${daily.borrowedPercent.toFixed(1)}% borrowed from later days` : ""}.`;
   }
-  if (!verified) return `Meter is ${decision.state}; share unknown.`;
+  if (!verified) {
+    return daily ? `No fresh reading; the last one showed ${daily.remainingTodayPercent.toFixed(1)}% of today's ${daily.todayBudgetPercent.toFixed(1)}% share left.`
+      : "No fresh reading; share unknown.";
+  }
   const left = daily
     ? `${daily.remainingTodayPercent.toFixed(1)}% of today's ${daily.todayBudgetPercent.toFixed(1)}% share left.`
     : "No daily share yet (reset time unknown).";

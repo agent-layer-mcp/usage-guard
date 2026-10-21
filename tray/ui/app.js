@@ -31,7 +31,7 @@ const metric = (label, barHtml, figure, detail) =>
 function laneHtml(provider, paused) {
   const d = provider.daily;
   const weekly = weeklyWindow(provider);
-  const today = todayText(d);
+  const today = todayText(d, { stale: provider.stale });
   const week = weekText(weekly);
   const notes = [staleText(provider), baselineNote(d), provider.state === "queue" ? provider.reason : paceText(provider)].filter(Boolean).join(" ");
   return `<article class="lane lane-${esc(provider.provider)}"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>${NAMES[provider.provider]}</span>${pill(statusPill(provider, { paused }))}</div>`

@@ -260,15 +260,16 @@ function estimateBurn(history, windowMinutes) {
   const segment = history.slice(segmentStart);
   if (segment.length < 2) return null;
   const latest = segment.at(-1);
-  const horizons = windowMinutes != null && windowMinutes <= 360
-    ? [15, 30, 60]
-    : [60, 360, 1_440];
+  const short = windowMinutes != null && windowMinutes <= 360;
+  const horizons = short ? [15, 30, 60] : [180, 360, 1_440];
+  // Meters report whole percents; over less than 3 hours one step reads as a weekly burn spike.
+  const minElapsed = short ? 2 : 180;
   const slopes = [];
 
   for (const horizonMinutes of horizons) {
     const candidates = segment.filter((candidate) => {
       const elapsed = (latest.observedAt - candidate.observedAt) / 60_000;
-      return elapsed >= 2 && elapsed <= horizonMinutes;
+      return elapsed >= minElapsed && elapsed <= horizonMinutes;
     });
     const comparison = candidates[0];
     if (!comparison) continue;

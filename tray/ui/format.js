@@ -24,7 +24,8 @@ export function statusPill(provider, { paused = false } = {}) {
   return { tone: "good", text: "On track" };
 }
 
-// Today row: points of the weekly allowance, out of today's share.
+// Today row: points of the weekly allowance, out of today's share. Used today is the
+// difference of two whole-percent meter readings, so it is good to about ±1 point.
 export function todayText(daily) {
   if (!daily) return { figure: "no share yet", detail: "No daily share until a weekly reset time is known." };
   const share = daily.todayBudgetPercent > 0 ? Math.round((daily.usedTodayPercent / daily.todayBudgetPercent) * 100) : 100;
@@ -32,7 +33,7 @@ export function todayText(daily) {
     figure: `${points(daily.usedTodayPercent)} of ${points(daily.todayBudgetPercent)} pts`,
     detail: daily.spent
       ? `Today's share is used up (${share}% of it)${daily.borrowedPercent > 0 ? `, ${points(daily.borrowedPercent)} pts borrowed from later days` : ""}. New work goes to another lane until the next share.`
-      : `${share}% of today's share used · ${points(daily.remainingTodayPercent)} pts left today.`,
+      : `${share}% of today's share used (±1 pt) · ${points(daily.remainingTodayPercent)} pts left today.`,
   };
 }
 

@@ -45,7 +45,9 @@ export function syncClaudeDesktop(store, options = {}) {
   const windows = snapshot.windows.map((window) => {
     if (window.resetsAt != null) return window;
     // Status line or host usage (e.g. balance.mjs) supply the reset the cache lacks.
-    const authoritative = store.latestFutureReset("claude", window.key, snapshot.observedAt);
+    // Prefer the Claude app's own reset time (host-usage) over the status line's.
+    const authoritative = store.latestFutureReset("claude", window.key, snapshot.observedAt, "host-usage")
+      || store.latestFutureReset("claude", window.key, snapshot.observedAt);
     if (authoritative && window.usedPercent + 1 >= authoritative.usedPercent) {
       retainedAuthoritativeReset = true;
       return { ...window, resetsAt: authoritative.resetsAt };
@@ -143,4 +145,9 @@ export function estimateRequestImpact(decision, request) {
       : "Request impact is within the current advisory threshold.",
     caveat: "Directional estimate: account burn may include other sessions or devices.",
   };
+}
+
+// Claude's weekly reset falls on the hour; an hours-left figure is rounded, so snap to the hour.
+export function claudeResetFromHours(now, hours) {
+  return Math.round((now + hours * 3_600_000) / 3_600_000) * 3_600_000;
 }

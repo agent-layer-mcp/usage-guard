@@ -9,7 +9,7 @@ const week = { windowMinutes: 10_080, usedPercent: 14, reservePercent: 5, resets
 test("today shows points of today's share, the share percent and points left", () => {
   assert.deepEqual(todayText(daily), {
     figure: "2.0 of 13.1 pts",
-    detail: "15% of today's share used · 11.1 pts left today.",
+    detail: "15% of today's share used (±1 pt) · 11.1 pts left today.",
   });
   const spent = todayText({ ...daily, usedTodayPercent: 15, remainingTodayPercent: 0, borrowedPercent: 1.9, spent: true });
   assert.match(spent.detail, /^Today's share is used up \(115% of it\), 1\.9 pts borrowed from later days\. New work goes to another lane/);

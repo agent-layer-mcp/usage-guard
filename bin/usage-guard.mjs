@@ -23,6 +23,7 @@ import {
   startScreenshotMemoryProxy,
 } from "../src/screenshot-proxy.mjs";
 import {
+  claudeResetFromHours,
   completeStatus,
   ingestClaudeStatus,
   providerDecision,
@@ -287,15 +288,19 @@ function bestEffortClaudeDesktopSync() {
 function ingestClaudeUsageOverride(values) {
   const used = numberOption(values, "--claude-used");
   const hours = numberOption(values, "--claude-hours");
-  if (used == null || hours == null) return;
+  const exact = stringOption(values, "--claude-reset");
+  if (used == null || (hours == null && !exact)) return;
   const now = Date.now();
+  const exactAt = exact ? Date.parse(exact) : NaN;
+  if (exact && !Number.isFinite(exactAt)) throw new Error("--claude-reset must be an ISO time.");
+  const resetsAt = exact ? exactAt : claudeResetFromHours(now, hours);
   const fiveHour = numberOption(values, "--claude-5h");
   store.saveSnapshot({
     provider: "claude",
     source: "host-usage",
     observedAt: now,
     windows: [
-      { key: "seven-day", label: "weekly", usedPercent: used, windowMinutes: 10_080, resetsAt: now + hours * 3_600_000 },
+      { key: "seven-day", label: "weekly", usedPercent: used, windowMinutes: 10_080, resetsAt },
       ...(fiveHour == null ? [] : [{ key: "five-hour", label: "5 hour", usedPercent: fiveHour, windowMinutes: 300, resetsAt: null }]),
     ],
   });
@@ -541,7 +546,7 @@ Commands:
   reset                         Clear local readings and decision history
   mcp                           Run the local MCP server over stdio
   enable | disable              Master switch: hooks, monitor and routing on or off
-  route [--kind code|review|plan|bulk] [--json] [--claude-used <pct> --claude-hours <h> [--claude-5h <pct>]]
+  route [--kind code|review|plan|bulk] [--json] [--claude-used <pct> (--claude-reset <iso> | --claude-hours <h>) [--claude-5h <pct>]]
                                 Pick the lane (Claude, Codex, Hermes/OpenRouter) for the next job
                                 Hermes kinds: lint-format test-write test-triage doc-update rename-mechanical file-scan
                                 [--repo <path>] [--failed <n>] (n failed Hermes attempts; 2 escalates)

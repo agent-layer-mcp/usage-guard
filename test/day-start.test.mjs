@@ -6,7 +6,7 @@ import path from "node:path";
 import { buildProviderDecision } from "../src/policy.mjs";
 import { readCodexLogHistory } from "../src/providers/codex.mjs";
 import { routeJob } from "../src/route.mjs";
-import { backfillHistory, syncClaudeDesktop } from "../src/service.mjs";
+import { backfillHistory, claudeResetFromHours, syncClaudeDesktop } from "../src/service.mjs";
 import { GuardStore } from "../src/store.mjs";
 
 const HOUR = 60 * 60_000;
@@ -89,4 +89,25 @@ test("a lane with only weekly room is not described as daily share", (t) => {
   assert.match(route.reason, /34\.0% of the week left; its daily share is unknown/);
   assert.doesNotMatch(route.reason, /most daily share/);
   assert.match(route.lanes.find((l) => l.lane === "claude").reason, /reset time unknown/);
+});
+
+test("Claude's reset prefers the app's time over a newer status-line time", (t) => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "ug-claude-pref-"));
+  const cachePath = path.join(home, "plan-usage-history.json");
+  writeFileSync(cachePath, JSON.stringify({ samples: [{ t: NOW, u: { fh: 1, sd: 64 } }] }));
+  const s = store(t);
+  const app = Date.UTC(2026, 9, 22, 23, 0);
+  const statusLine = Date.UTC(2026, 9, 22, 22, 42);
+  s.saveSnapshot({ provider: "claude", source: "host-usage", observedAt: NOW - 2 * HOUR,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 63, windowMinutes: 10_080, resetsAt: app }] });
+  s.saveSnapshot({ provider: "claude", source: "status-line", observedAt: NOW - HOUR,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 63, windowMinutes: 10_080, resetsAt: statusLine }] });
+  const snapshot = syncClaudeDesktop(s, { cachePath });
+  assert.equal(snapshot.windows.find((w) => w.key === "seven-day").resetsAt, app);
+});
+
+test("an hours-left figure snaps Claude's reset to the hour", () => {
+  const now = Date.UTC(2026, 9, 21, 0, 17);
+  assert.equal(claudeResetFromHours(now, 46.7), Date.UTC(2026, 9, 22, 23, 0));
+  assert.equal(claudeResetFromHours(now, 46.4), Date.UTC(2026, 9, 22, 23, 0));
 });

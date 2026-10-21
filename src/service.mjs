@@ -1,5 +1,6 @@
 import { buildProviderDecision, buildStatus } from "./policy.mjs";
 import { parseClaudeStatusLine } from "./providers/claude.mjs";
+import { fetchClaudeUsage } from "./providers/claude-api.mjs";
 import { readClaudeDesktopSamples, readClaudeDesktopUsage } from "./providers/claude-desktop.mjs";
 import { fetchCodexSnapshot, readCodexLogHistory } from "./providers/codex.mjs";
 import { readPxpipeTelemetry } from "./providers/pxpipe.mjs";
@@ -35,6 +36,27 @@ export function backfillHistory(store, provider, read, source, now = Date.now())
     if (reading.observedAt >= firstByKey.get(reading.key)) continue;
     store.saveSnapshot({ provider, source, observedAt: reading.observedAt, windows: [reading] });
   }
+}
+
+const CLAUDE_POLL_MS = 60_000;
+
+// Claude's own usage endpoint first, the desktop cache as fallback. Hooks fire on
+// every tool call, so the endpoint is asked at most once a minute (failures included).
+// The endpoint is polled only when options.claudeApi is given, so tests stay offline.
+export async function syncClaude(store, options = {}) {
+  if (options.claudeApi) {
+    const now = options.claudeApi.now ?? Date.now();
+    const last = store.getNoticeState("claude", "claude-oauth-poll");
+    if (!last || now - last.updatedAt >= CLAUDE_POLL_MS) {
+      store.setNoticeState("claude", "claude-oauth-poll", "attempted", now);
+      const snapshot = await fetchClaudeUsage(options.claudeApi);
+      if (snapshot) {
+        store.saveSnapshot({ ...snapshot, authoritativeWindows: true });
+        return snapshot;
+      }
+    }
+  }
+  return syncClaudeDesktop(store, options.claudeDesktop);
 }
 
 export function syncClaudeDesktop(store, options = {}) {

@@ -27,7 +27,7 @@ import {
   completeStatus,
   ingestClaudeStatus,
   providerDecision,
-  syncClaudeDesktop,
+  syncClaude,
   syncCodex,
 } from "../src/service.mjs";
 import { GuardStore } from "../src/store.mjs";
@@ -59,9 +59,9 @@ try {
     }
     const snapshots = {};
     if (["claude", "all"].includes(provider)) {
-      const snapshot = syncClaudeDesktop(store);
+      const snapshot = await syncClaude(store, { claudeApi: {} });
       if (!snapshot && provider === "claude") {
-        throw new Error("No supported Claude Desktop aggregate usage cache was found.");
+        throw new Error("No Claude usage reading: Claude Code login missing or expired, and no Claude Desktop usage cache was found.");
       }
       if (snapshot) snapshots.claude = snapshot.windows;
     }
@@ -87,7 +87,7 @@ try {
     const provider = args[0];
     if (!["claude", "codex"].includes(provider)) throw new Error("Hook provider must be `claude` or `codex`.");
     const input = await readStdinJson();
-    const output = await runProviderHook(store, provider, input, { eventName: args[1] });
+    const output = await runProviderHook(store, provider, input, { eventName: args[1], claudeApi: { timeoutMs: 6000 } });
     console.log(JSON.stringify(output));
     store.close();
   } else if (command === "serve") {
@@ -103,7 +103,7 @@ try {
     process.on("SIGINT", close);
     process.on("SIGTERM", close);
   } else if (command === "mcp") {
-    bestEffortClaudeDesktopSync();
+    await bestEffortClaudeSync();
     runMcpServer(store);
     process.on("SIGINT", () => {
       store.close();
@@ -116,7 +116,7 @@ try {
       throw new Error("Monitor provider must be `claude`, `codex`, or `all`.");
     }
     const runOnce = async () => {
-      const results = await runMonitorCycle(store, { providers: provider === "all" ? ["claude", "codex"] : [provider] });
+      const results = await runMonitorCycle(store, { providers: provider === "all" ? ["claude", "codex"] : [provider], claudeApi: {} });
       if (!args.includes("--quiet")) {
         for (const result of results) console.log(formatStatusLine(result.decision, { color: false }));
       }
@@ -277,9 +277,9 @@ async function bestEffortCodexSync() {
   }
 }
 
-function bestEffortClaudeDesktopSync() {
+async function bestEffortClaudeSync() {
   try {
-    return syncClaudeDesktop(store);
+    return await syncClaude(store, { claudeApi: {} });
   } catch {
     return null;
   }
@@ -338,7 +338,7 @@ function formatRoute(route) {
 }
 
 async function bestEffortProviderSyncs() {
-  bestEffortClaudeDesktopSync();
+  await bestEffortClaudeSync();
   await bestEffortCodexSync();
 }
 
@@ -397,7 +397,7 @@ function parseScalar(value) {
 }
 
 async function runDoctor() {
-  const claudeDesktopSnapshot = bestEffortClaudeDesktopSync();
+  const claudeDesktopSnapshot = await bestEffortClaudeSync();
   const config = store.getConfig();
   const stepping = config.modelStepping && !config.qualityLock;
   const claudeCommand = commandCheck("claude", ["--version"]);
@@ -455,6 +455,10 @@ function claudeLadderCompatibility(claudeCommand) {
 }
 
 function claudeDesktopCacheCheck(snapshot) {
+  if (snapshot?.source === "claude-oauth-usage") {
+    const readings = snapshot.windows.map((window) => `${window.label} ${window.usedPercent.toFixed(0)}%`).join(", ");
+    return { label: "Claude usage (Claude Code login)", ok: true, detail: `${readings}; observed ${new Date(snapshot.observedAt).toISOString()}` };
+  }
   if (process.platform !== "darwin") {
     return { label: "Claude desktop cache", ok: true, detail: "not applicable on this platform" };
   }

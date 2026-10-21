@@ -7,7 +7,7 @@ import { readPxpipeTelemetry } from "./providers/pxpipe.mjs";
 import {
   estimateRequestImpact,
   providerDecision,
-  syncClaudeDesktop,
+  syncClaude,
   syncCodex,
 } from "./service.mjs";
 
@@ -28,7 +28,7 @@ export async function runMonitorCycle(store, options = {}) {
 
   for (const provider of providers) {
     try {
-      if (provider === "claude") syncClaudeDesktop(store, options.claudeDesktop);
+      if (provider === "claude") await syncClaude(store, options);
       else if (provider === "codex") await syncCodex(store, options.codex);
     } catch {
       // Missing or changed provider signals remain visible as stale/missing state.

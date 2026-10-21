@@ -1,6 +1,6 @@
 import { formatStatusLine } from "./presentation.mjs";
 import { readScreenshotMemoryStatus } from "./screenshot-proxy.mjs";
-import { providerDecision, syncClaudeDesktop, syncCodex } from "./service.mjs";
+import { providerDecision, syncClaude, syncCodex } from "./service.mjs";
 import {
   readCompactionHandoff,
   writeCompactionHandoff,
@@ -32,7 +32,7 @@ export async function runProviderHook(store, provider, input, options = {}) {
     }
   } else if (provider === "claude") {
     try {
-      syncClaudeDesktop(store, options.claudeDesktop);
+      await syncClaude(store, { claudeDesktop: options.claudeDesktop, claudeApi: options.claudeApi });
     } catch {
       // An absent or changed desktop cache must not break Claude's hook lifecycle.
     }

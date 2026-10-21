@@ -43,7 +43,8 @@ export function writeOpenRouterKey(stateHome, key) {
   return file;
 }
 
-const LOCAL_COMMAND = "npx @agent-layer/usage-guard setup";
+// shortcut: the npm package isn't published yet; switch this to `npx @agent-layer/usage-guard setup` once it is.
+const LOCAL_COMMAND = "npm install --global https://github.com/agent-layer-mcp/usage-guard/releases/latest/download/usage-guard.tgz\n  usage-guard setup";
 
 export async function runSetup(deps) {
   const { ui, options = {} } = deps;
@@ -151,7 +152,10 @@ async function firstReading(tool, deps) {
     }
     const snapshot = tool === "claude" ? await deps.syncClaude() : await deps.syncCodex();
     if (!snapshot?.windows?.length) return "no reading yet (it will try again at the next check)";
-    return snapshot.windows.map((window) => `${window.label} ${Math.round(window.usedPercent)}%`).join(", ");
+    const figures = snapshot.windows.map((window) => `${window.label} ${Math.round(window.usedPercent)}%`).join(", ");
+    // A fallback source can hand back an old reading; say so rather than show it as current.
+    const ageMinutes = Math.round(((deps.now ?? Date.now()) - (snapshot.observedAt ?? Infinity)) / 60_000);
+    return ageMinutes > 15 ? `no live reading yet (last known, ${ageMinutes >= 120 ? `${Math.round(ageMinutes / 60)}h` : `${ageMinutes}m`} old: ${figures})` : figures;
   } catch (error) {
     return `no reading yet (${error.message})`;
   }

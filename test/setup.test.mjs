@@ -44,7 +44,8 @@ function deps(t, overrides = {}) {
     openRouterKeySaved: () => false,
     writeOpenRouterKey: () => "/home/u/.usage-guard/openrouter.env",
     readOpenRouterSpend: async () => ({ configured: true, spentTodayUsd: 0.25 }),
-    syncClaude: async () => ({ windows: [{ label: "5 hour", usedPercent: 9 }, { label: "weekly", usedPercent: 66.4 }] }),
+    now: 10 * 3_600_000,
+    syncClaude: async () => ({ observedAt: 10 * 3_600_000, windows: [{ label: "5 hour", usedPercent: 9 }, { label: "weekly", usedPercent: 66.4 }] }),
     syncCodex: async () => { throw new Error("codex not signed in"); },
     install: (options) => { installs.push(options); return { monitor: { enabled: true } }; },
     ...overrides,
@@ -66,7 +67,7 @@ test("setup in a cloud session changes nothing and says to run it locally", asyn
   assert.equal(result.status, "cloud");
   assert.equal(d.installs.length, 0);
   const note = ui.shown.find(([kind]) => kind === "note");
-  assert.match(note[2], /npx @agent-layer\/usage-guard setup/);
+  assert.match(note[2], /usage-guard setup/);
   assert.match(note[2], /tracks your cloud sessions too/);
 });
 
@@ -164,4 +165,11 @@ test("the background check runs every 10 minutes on Linux, macOS and Windows", (
   assert.equal(win.intervalSeconds, 600);
   assert.deepEqual(calls.at(-1), ["schtasks", "/Create", "/F", "/SC", "MINUTE", "/MO", "10", "/TN", "Usage Guard monitor",
     "/TR", '"/usr/bin/node" "/opt/ug.mjs" "monitor" "--once" "--quiet" "--provider" "all"']);
+});
+
+test("an old fallback reading is labelled, not shown as current", async (t) => {
+  const d = deps(t, { syncClaude: async () => ({ observedAt: 5 * 3_600_000, windows: [{ label: "weekly", usedPercent: 66 }] }) });
+  const ui = fakeUi([["claude"], true, true]);
+  await runSetup({ ...d, ui });
+  assert.match(ui.shown.find(([, title]) => title === "Usage now")[2], /Claude: no live reading yet \(last known, 5h old: weekly 66%\)/);
 });

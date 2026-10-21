@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,11 +13,24 @@ export function claudeCredentialsPath(options = {}) {
   return path.join(env.CLAUDE_CONFIG_DIR || path.join(options.homeDir ?? os.homedir(), ".claude"), ".credentials.json");
 }
 
+// Where Claude Code keeps its login: the macOS Keychain, otherwise a file in ~/.claude.
+export function claudeLoginSource(options = {}) {
+  return (options.platform ?? process.platform) === "darwin" && !options.credentialsPath ? "keychain" : "file";
+}
+
+function readClaudeLogin(options) {
+  if (claudeLoginSource(options) === "keychain") {
+    const run = options.commandRunner ?? ((command, args) => execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }));
+    return run("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"]);
+  }
+  return readFileSync(options.credentialsPath ?? claudeCredentialsPath(options), "utf8");
+}
+
 // Claude Code's login, or null when it is missing or expired. No other credential is tried.
 export function readClaudeCodeToken(options = {}) {
   const now = options.now ?? Date.now();
   try {
-    const oauth = JSON.parse(readFileSync(options.credentialsPath ?? claudeCredentialsPath(options), "utf8"))?.claudeAiOauth;
+    const oauth = JSON.parse(readClaudeLogin(options))?.claudeAiOauth;
     if (typeof oauth?.accessToken !== "string" || !oauth.accessToken) return null;
     if (Number.isFinite(oauth.expiresAt) && oauth.expiresAt <= now) return null;
     return oauth.accessToken;

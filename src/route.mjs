@@ -63,7 +63,7 @@ export function routeJob(store, kind, options = {}) {
         : choice.subscription
           ? choice.verified
             ? choice.hasDailyShare
-              ? `${laneName(choice.lane)} has the most daily share left (${choice.remainingTodayPercent.toFixed(1)}% of today's share).`
+              ? `${laneName(choice.lane)} has the most daily share left (${choice.remainingTodayPercent.toFixed(1)} pts left today).`
               : `${laneName(choice.lane)} has ${choice.remainingTodayPercent.toFixed(1)}% of the week left; its daily share is unknown until a reset time is known.`
             : `${laneName(choice.lane)} has no fresh usage reading, so its share is unknown; no other lane has share left.`
           : best

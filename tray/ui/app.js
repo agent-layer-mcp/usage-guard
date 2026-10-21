@@ -1,17 +1,10 @@
 // Panel for the Usage Guard tray. All data comes through the app's own Rust commands.
+import { hermesText, paceText, statusPill, todayText, weeklyWindow, weekText } from "./format.js";
+
 const { invoke } = window.__TAURI__.core;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const NAMES = { claude: "Claude", codex: "Codex", hermes: "Hermes" };
-const pct = (value) => `${Number(value).toFixed(1)}%`;
-
-function countdown(at) {
-  if (!at) return "reset unknown";
-  const minutes = Math.max(0, Math.round((at - Date.now()) / 60_000));
-  const days = Math.floor(minutes / 1440);
-  const hours = Math.floor((minutes % 1440) / 60);
-  return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
-}
 
 function bar(fraction, reserveFraction = 0, over = false) {
   const width = Math.min(100, Math.max(0, fraction * 100));
@@ -31,35 +24,29 @@ function baselineNote(d) {
   return null;
 }
 
-function laneHtml(provider, routeLane) {
+const pill = ({ tone, text }) => `<span class="stamp ${tone}">${esc(text)}</span>`;
+const metric = (label, barHtml, figure, detail) =>
+  `<div class="metric"><div class="row"><span>${label}</span>${barHtml}<span>${esc(figure)}</span></div><p class="detail">${esc(detail)}</p></div>`;
+
+function laneHtml(provider, paused) {
   const d = provider.daily;
-  const weekly = provider.windows.find((w) => w.windowMinutes > 360);
-  const today = d
-    ? `<div class="row"><span>today</span>${bar(d.todayBudgetPercent ? d.usedTodayPercent / d.todayBudgetPercent : 1, 0, d.spent)}<span>${pct(d.usedTodayPercent)} of ${pct(d.todayBudgetPercent)}</span></div>`
-    : `<div class="row"><span>today</span>${bar(0)}<span>no share yet</span></div>`;
-  const week = weekly
-    ? `<div class="row"><span>week</span>${bar(weekly.usedPercent / 100, weekly.reservePercent / 100)}<span>${Math.round(weekly.usedPercent)}% used</span></div>`
-    : "";
-  const shareUsed = d && d.todayBudgetPercent > 0 ? Math.round((d.usedTodayPercent / d.todayBudgetPercent) * 100) : null;
-  const notes = [
-    d?.spent ? "Today's share is spent." : shareUsed != null ? `Used ${shareUsed}% of today's share; ${pct(d.remainingTodayPercent)} of the week is left to use today.` : null,
-    weekly ? (weekly.resetsAt ? `Week resets in ${countdown(weekly.resetsAt)}.` : "Reset time unknown.") : null,
-    baselineNote(d),
-    d?.borrowedPercent > 0 ? `${pct(d.borrowedPercent)} borrowed from later days.` : null,
-    // Pace pressure (the stamp) explained in words; the daily figures are above.
-    ["watch", "protect"].includes(provider.state) && !d?.spent ? `Pace warning only, still taking work: ${provider.reason}`
-      : provider.state === "queue" ? provider.reason : null,
-  ].filter(Boolean).join(" ");
-  return `<article class="lane lane-${esc(provider.provider)}"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>${NAMES[provider.provider]}</span><span class="stamp ${esc(provider.state)}">${esc(provider.state)}</span></div>${today}${week}<p class="note">${esc(notes)}</p></article>`;
+  const weekly = weeklyWindow(provider);
+  const today = todayText(d);
+  const week = weekText(weekly);
+  const notes = [baselineNote(d), provider.state === "queue" ? provider.reason : paceText(provider)].filter(Boolean).join(" ");
+  return `<article class="lane lane-${esc(provider.provider)}"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>${NAMES[provider.provider]}</span>${pill(statusPill(provider, { paused }))}</div>`
+    + metric("today", bar(d && d.todayBudgetPercent ? d.usedTodayPercent / d.todayBudgetPercent : 0, 0, d?.spent), today.figure, today.detail)
+    + (week ? metric("week", bar(weekly.usedPercent / 100, (weekly.reservePercent ?? 0) / 100), week.figure, week.detail) : "")
+    + (notes ? `<p class="note">${esc(notes)}</p>` : "") + "</article>";
 }
 
 function payAsYouGoHtml(lane) {
   if (!lane) return "";
-  const spent = lane.spentTodayUsd;
-  const row = spent == null
-    ? `<div class="row"><span>today</span>${bar(0)}<span>—</span></div>`
-    : `<div class="row"><span>today</span>${bar(spent / lane.dailyCapUsd, 0, spent >= lane.dailyCapUsd)}<span>$${spent.toFixed(2)} / $${lane.dailyCapUsd}</span></div>`;
-  return `<article class="lane lane-hermes"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>Hermes (OpenRouter)</span><span class="stamp ${lane.available ? "safe" : "stale"}">${lane.available ? "open" : "closed"}</span></div>${row}<p class="note">${esc(lane.reason)}</p></article>`;
+  const text = hermesText(lane);
+  const spent = lane.spentTodayUsd ?? 0;
+  return `<article class="lane lane-hermes"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>Hermes (OpenRouter)</span>${pill({ tone: text.tone, text: text.pill })}</div>`
+    + metric("today", bar(lane.dailyCapUsd ? spent / lane.dailyCapUsd : 0, 0, !lane.available && lane.spentTodayUsd != null), text.figure, text.detail)
+    + "</article>";
 }
 
 function trayLabel(status, route) {
@@ -81,7 +68,7 @@ async function refresh() {
     ]);
     $("error").hidden = true;
     const lanes = Object.fromEntries(route.lanes.map((lane) => [lane.lane, lane]));
-    $("lanes").innerHTML = status.providers.map((p) => laneHtml(p, lanes[p.provider])).join("") + payAsYouGoHtml(lanes.hermes);
+    $("lanes").innerHTML = status.providers.map((p) => laneHtml(p, Boolean(status.config.routingPaused))).join("") + payAsYouGoHtml(lanes.hermes);
     $("hermes-model").textContent = status.config.hermesModel;
     if (document.activeElement !== $("cap")) $("cap").value = status.config.payAsYouGoDailyCapUsd;
     $("route-lane").textContent = route.lane === "off" ? "Your own rules (Usage Guard is off)" : route.lane === "wait" ? "Wait for the next share" : `${NAMES[route.lane] || route.lane}${route.model ? ` · ${route.model}` : ""}`;

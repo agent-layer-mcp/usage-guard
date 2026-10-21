@@ -142,7 +142,7 @@ test("a lane without a fresh reading is not described as having share left", (t)
   const store = new GuardStore({ filename: ":memory:" });
   t.after(() => store.close());
   const route = routeJob(store, "code", { now: NOW });
-  assert.match(route.reason, /no fresh usage reading/);
+  assert.match(route.reason, /no fresh reading/);
 });
 
 test("Codex first sends code and bulk to Codex above the line, even with its daily share spent", (t) => {
@@ -227,4 +227,30 @@ test("a stale lane keeps its last known share but ranks after a fresh one", (t) 
   assert.equal(claude.verified, false);
   assert.ok(claude.todayBudgetPercent > 0); // last known share kept
   assert.equal(route.lane, "codex");
+});
+
+test("with Codex spent and Claude stale, the job never defaults to Codex", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [55, 68.04] });
+  const later = NOW + HOUR;
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 69, windowMinutes: 10_080, resetsAt: RESET }] });
+  const route = routeJob(store, "code", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.equal(route.lanes.find((l) => l.lane === "codex").available, false);
+  assert.equal(route.lanes.find((l) => l.lane === "claude").verified, false);
+  assert.notEqual(route.lane, "codex");
+});
+
+test("stale Claude and spent Codex: code never goes to Codex, routine work goes to Hermes", (t) => {
+  // Codex spent (13 of ~13 pts); Claude's last reading is an hour old with share left.
+  const store = fixture(t, { claude: [59, 61], codex: [55, 68.5] });
+  const later = NOW + HOUR;
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 68.5, windowMinutes: 10_080, resetsAt: RESET }] });
+  const code = routeJob(store, "code", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.equal(code.lane, "claude");
+  assert.match(code.reason, /^Claude has no fresh reading \(last reading: [\d.]+ pts left today\)/);
+  assert.match(code.lanes.find((l) => l.lane === "claude").reason, /^No fresh reading; the last one showed/);
+  const bulk = routeJob(store, "bulk", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.equal(bulk.lane, "hermes");
+  assert.match(bulk.reason, /Claude has no fresh reading, so routine work goes to Hermes/);
 });

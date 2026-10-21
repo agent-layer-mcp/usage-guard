@@ -26,7 +26,8 @@ export function statusPill(provider, { paused = false } = {}) {
 
 // Today row: points of the weekly allowance, out of today's share. Used today is the
 // difference of two whole-percent meter readings, so it is good to about ±1 point.
-export function todayText(daily) {
+export function todayText(daily, { stale = false } = {}) {
+  if (!daily && stale) return { figure: "no fresh reading", detail: "No fresh meter reading, so today's share is unknown." };
   if (!daily) return { figure: "no share yet", detail: "No daily share until a weekly reset time is known." };
   const share = daily.todayBudgetPercent > 0 ? Math.round((daily.usedTodayPercent / daily.todayBudgetPercent) * 100) : 100;
   return {
@@ -42,7 +43,7 @@ export function staleText(provider, now = Date.now()) {
   if (!provider.stale || !provider.lastReadingAt) return null;
   const at = new Date(provider.lastReadingAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const name = provider.provider === "claude" ? "Claude" : "Codex";
-  return `Figures are from the last reading at ${at} (${countdown(now + (now - provider.lastReadingAt), now)} ago). ${name} gets new work only after lanes with fresh readings; open the ${name} app to refresh it.`;
+  return `No fresh reading. Figures are from the last reading at ${at} (${countdown(now + (now - provider.lastReadingAt), now)} ago). ${name} gets new work only after lanes with fresh readings; open the ${name} app to refresh it.`;
 }
 
 // Week row: whole-week percentages, with the kept reserve called out.

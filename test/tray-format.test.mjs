@@ -54,6 +54,14 @@ test("Hermes shows dollars spent against the cap", () => {
 test("a stale lane says how old its figures are", () => {
   const now = Date.UTC(2026, 9, 21, 8, 10);
   const text = staleText({ provider: "claude", stale: true, lastReadingAt: now - (4 * 60 + 14) * 60_000 }, now);
-  assert.match(text, /^Figures are from the last reading at .+ \(4h 14m ago\)\. Claude gets new work only after lanes with fresh readings/);
+  assert.match(text, /^No fresh reading\. Figures are from the last reading at .+ \(4h 14m ago\)\. Claude gets new work only after lanes with fresh readings/);
   assert.equal(staleText({ provider: "codex", stale: false }), null);
+});
+
+test("spent share says so, and a stale lane with no share says no fresh reading", () => {
+  const spent = { ...daily, usedTodayPercent: 13, remainingTodayPercent: 0.1, spent: true };
+  assert.deepEqual(statusPill({ state: "protect", daily: spent }), { tone: "spent", text: "Today's share spent" });
+  assert.match(todayText(spent).detail, /^Today's share is used up/);
+  assert.equal(todayText(null, { stale: true }).figure, "no fresh reading");
+  assert.doesNotMatch(todayText(null, { stale: true }).detail, /reset time/);
 });

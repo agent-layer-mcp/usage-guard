@@ -20,6 +20,9 @@ const CODEX_STATUS_ITEMS = [
   "weekly-limit",
 ];
 const MONITOR_LABEL = "sh.agentlayer.usage-guard.monitor";
+const SYSTEMD_UNIT = "usage-guard-monitor";
+const SYSTEMD_SERVE_UNIT = "usage-guard-serve";
+const SYSTEMD_MARKER = "Managed by Usage Guard";
 const SCREENSHOT_MEMORY_LABEL = "sh.agentlayer.usage-guard.screenshot-memory";
 const SCREENSHOT_MEMORY_PORT = 47_822;
 const SCREENSHOT_MEMORY_URL = `http://127.0.0.1:${SCREENSHOT_MEMORY_PORT}`;
@@ -51,36 +54,40 @@ export function installIntegrations(options = {}) {
     runtime,
     bootstrapRuntimePath,
     providers: normalizeProviderPaths(options.providerPaths),
-    codex: configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
+    // integrations: false leaves Claude and Codex settings and plugins untouched.
+    integrations: options.integrations !== false,
+    codex: options.integrations === false ? null : configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
   };
-  record.screenshotMemory = configureScreenshotMemoryProxy({
-    home,
-    stateHome,
-    runtime,
-    upstream: options.screenshotMemoryUpstream || screenshotMemoryUpstream,
-    retentionTurns: options.screenshotMemoryTurns || 5,
-    enabled: options.installScreenshotMemory !== false,
-    platform: options.platform,
-    uid: options.uid,
-    commandRunner: options.commandRunner || runCommand,
-  });
-  record.claude = configureClaude(
-    claudeSettingsPath,
-    stateHome,
-    runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
-    {
-      screenshotMemoryUrl: record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
-      autoCompactPercent: options.autoCompactPercent,
-    },
-  );
-  if (
-    configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
-    && existingRecord.claude
-    && Object.hasOwn(existingRecord.claude, "previousBaseUrl")
-  ) {
-    record.claude.previousBaseUrl = existingRecord.claude.previousBaseUrl;
+  if (options.integrations !== false) {
+    record.screenshotMemory = configureScreenshotMemoryProxy({
+      home,
+      stateHome,
+      runtime,
+      upstream: options.screenshotMemoryUpstream || screenshotMemoryUpstream,
+      retentionTurns: options.screenshotMemoryTurns || 5,
+      enabled: options.installScreenshotMemory !== false,
+      platform: options.platform,
+      uid: options.uid,
+      commandRunner: options.commandRunner || runCommand,
+    });
+    record.claude = configureClaude(
+      claudeSettingsPath,
+      stateHome,
+      runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
+      {
+        screenshotMemoryUrl: record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
+        autoCompactPercent: options.autoCompactPercent,
+      },
+    );
+    if (
+      configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
+      && existingRecord.claude
+      && Object.hasOwn(existingRecord.claude, "previousBaseUrl")
+    ) {
+      record.claude.previousBaseUrl = existingRecord.claude.previousBaseUrl;
+    }
+    preservePreviousClaudeEnvironment(record.claude, existingRecord.claude);
   }
-  preservePreviousClaudeEnvironment(record.claude, existingRecord.claude);
   record.notifier = configureNativeNotifier({
     packageRoot,
     stateHome,
@@ -92,12 +99,13 @@ export function installIntegrations(options = {}) {
     stateHome,
     runtime,
     enabled: options.installMonitor !== false,
+    start: options.startMonitor !== false,
     platform: options.platform,
     uid: options.uid,
     commandRunner: options.commandRunner || runCommand,
   });
 
-  if (options.installPlugins !== false && packageRoot) {
+  if (options.installPlugins !== false && options.integrations !== false && packageRoot) {
     record.plugins = installPlugins(packageRoot, options.commandRunner || runCommand);
   }
   writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
@@ -282,12 +290,16 @@ export function inspectConfiguredIntegrations(options = {}) {
     && existsSync(bootstrapRuntime),
   );
   const monitorPath = record.monitor?.path
-    || path.join(home, "Library", "LaunchAgents", `${MONITOR_LABEL}.plist`);
-  const monitorReady = platform !== "darwin"
+    || (platform === "linux"
+      ? path.join(home, ".config", "systemd", "user", `${SYSTEMD_UNIT}.timer`)
+      : path.join(home, "Library", "LaunchAgents", `${MONITOR_LABEL}.plist`));
+  const monitorSupported = ["darwin", "linux"].includes(platform);
+  const monitorReady = !monitorSupported
     || Boolean(record.monitor?.enabled && existsSync(monitorPath));
   const notifierPath = record.notifier?.executable
     || path.join(stateHomeForRecord(recordPath, options.env), "Usage Guard.app", "Contents", "MacOS", "UsageGuardNotifier");
-  const notifierReady = platform !== "darwin" || existsSync(notifierPath);
+  const notifierReady = platform === "linux" ? existsSync(options.notifySendPath || "/usr/bin/notify-send")
+    : platform !== "darwin" || existsSync(notifierPath);
   const screenshotMemoryPath = record.screenshotMemory?.path
     || path.join(
       home,
@@ -344,7 +356,9 @@ export function inspectConfiguredIntegrations(options = {}) {
     {
       label: "Desktop notifications",
       ok: notifierReady,
-      detail: platform !== "darwin"
+      detail: platform === "linux"
+        ? notifierReady ? "notify-send alerts enabled" : "install libnotify (notify-send) for desktop alerts"
+        : platform !== "darwin"
         ? "not applicable on this platform"
         : notifierReady
           ? "native Usage Guard alerts enabled"
@@ -353,11 +367,13 @@ export function inspectConfiguredIntegrations(options = {}) {
     {
       label: "Desktop monitor",
       ok: monitorReady,
-      detail: platform !== "darwin"
+      detail: !monitorSupported
         ? "not applicable on this platform"
         : monitorReady
-          ? "checks aggregate Claude usage every minute"
-          : "rerun `usage-guard install` to enable macOS alerts",
+          ? platform === "linux"
+            ? "systemd user timer checks Claude and Codex every minute"
+            : "checks aggregate Claude usage every minute"
+          : `rerun \`usage-guard install\` to enable ${platform === "linux" ? "Linux" : "macOS"} alerts`,
     },
     {
       label: "Screenshot Memory",
@@ -411,9 +427,10 @@ export function configureNativeNotifier(options = {}) {
 
 export function configureBackgroundMonitor(options = {}) {
   const platform = options.platform || process.platform;
-  if (platform !== "darwin" || options.enabled === false || !options.runtime) {
+  if (!["darwin", "linux"].includes(platform) || options.enabled === false || !options.runtime) {
     return { enabled: false, platform };
   }
+  if (platform === "linux") return configureSystemdMonitor(options);
 
   const home = options.home || os.homedir();
   const stateHome = options.stateHome || guardHome();
@@ -443,6 +460,78 @@ export function configureBackgroundMonitor(options = {}) {
     previous,
     intervalSeconds: 60,
   };
+}
+
+// Linux: a systemd user timer runs one monitor cycle for both providers each minute.
+function configureSystemdMonitor(options) {
+  const home = options.home || os.homedir();
+  const stateHome = options.stateHome || guardHome();
+  const unitDir = path.join(options.env?.XDG_CONFIG_HOME || path.join(home, ".config"), "systemd", "user");
+  const servicePath = path.join(unitDir, `${SYSTEMD_UNIT}.service`);
+  const timerPath = path.join(unitDir, `${SYSTEMD_UNIT}.timer`);
+  const run = options.commandRunner || runCommand;
+  mkdirSync(unitDir, { recursive: true });
+  mkdirSync(stateHome, { recursive: true, mode: 0o700 });
+  const previous = existsSync(servicePath) && !readFileSync(servicePath, "utf8").includes(SYSTEMD_MARKER)
+    ? readFileSync(servicePath, "utf8") : null;
+  const command = [options.runtime.command, ...options.runtime.argsPrefix, "monitor", "--once", "--quiet", "--provider", "all"]
+    .map(systemdQuote).join(" ");
+  writeFileSync(servicePath, `# ${SYSTEMD_MARKER}
+[Unit]
+Description=Usage Guard quota monitor
+
+[Service]
+Type=oneshot
+Environment=${systemdQuote(`USAGE_GUARD_HOME=${stateHome}`)}
+ExecStart=${command}
+`, { mode: 0o600 });
+  writeFileSync(timerPath, `# ${SYSTEMD_MARKER}
+[Unit]
+Description=Run the Usage Guard quota monitor every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+`, { mode: 0o600 });
+  // The local API for the tray; installed stopped, started with `systemctl --user enable --now usage-guard-serve`.
+  const servePath = path.join(unitDir, `${SYSTEMD_SERVE_UNIT}.service`);
+  writeFileSync(servePath, `# ${SYSTEMD_MARKER}
+[Unit]
+Description=Usage Guard local API for the tray
+
+[Service]
+Environment=${systemdQuote(`USAGE_GUARD_HOME=${stateHome}`)}
+ExecStart=${[options.runtime.command, ...options.runtime.argsPrefix, "serve"].map(systemdQuote).join(" ")}
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+`, { mode: 0o600 });
+  run("systemctl", ["--user", "daemon-reload"]);
+  if (options.start !== false) run("systemctl", ["--user", "enable", "--now", `${SYSTEMD_UNIT}.timer`]);
+  return {
+    enabled: true, label: SYSTEMD_UNIT, path: timerPath, servicePath, servePath, previous, intervalSeconds: 60,
+    started: options.start !== false,
+  };
+}
+
+function systemdQuote(value) {
+  return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
+}
+
+// Master switch side effect: on Linux the monitor timer runs only while Usage Guard is enabled.
+export function setMonitorRunning(running, options = {}) {
+  const recordPath = options.recordPath || installRecordPath(options.env);
+  if (!existsSync(recordPath)) return false;
+  const monitor = readJsonFile(recordPath, {}).monitor;
+  if (!monitor?.enabled || !monitor.servicePath || (options.platform || process.platform) !== "linux") return false;
+  const run = options.commandRunner || runCommand;
+  run("systemctl", ["--user", running ? "enable" : "disable", "--now", `${monitor.label}.timer`], true);
+  return true;
 }
 
 export function configureCodex(configPath, stateHome) {
@@ -564,8 +653,21 @@ function restoreCodex(record) {
 function restoreBackgroundMonitor(record, options = {}) {
   if (!record?.enabled || !record.path) return;
   const platform = options.platform || process.platform;
-  if (platform !== "darwin") return;
   const run = options.commandRunner || runCommand;
+  if (platform === "linux" && record.servicePath) {
+    run("systemctl", ["--user", "disable", "--now", `${record.label}.timer`], true);
+    if (record.servePath) {
+      run("systemctl", ["--user", "disable", "--now", `${SYSTEMD_SERVE_UNIT}.service`], true);
+      if (existsSync(record.servePath)) unlinkSync(record.servePath);
+    }
+    if (existsSync(record.path)) unlinkSync(record.path);
+    if (record.previous == null) {
+      if (existsSync(record.servicePath)) unlinkSync(record.servicePath);
+    } else writeFileSync(record.servicePath, record.previous, { mode: 0o600 });
+    run("systemctl", ["--user", "daemon-reload"], true);
+    return;
+  }
+  if (platform !== "darwin") return;
   const uid = options.uid ?? process.getuid?.();
   run("/bin/launchctl", ["bootout", `gui/${uid}`, record.path], true);
   if (record.previous == null) {

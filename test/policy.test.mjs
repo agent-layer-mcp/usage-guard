@@ -259,3 +259,16 @@ test("does not reuse another session's context when an exact session is unknown"
   assert.equal(decision.context, null);
   store.close();
 });
+
+test("a whole-percent step inside 3 hours does not count as weekly burn", () => {
+  const now = Date.UTC(2026, 9, 21, 0, 0);
+  const reading = (minutesAgo, usedPercent) => ({
+    key: "seven-day", label: "weekly", windowMinutes: 10_080, usedPercent,
+    resetsAt: now + 2 * 24 * 60 * 60_000, observedAt: now - minutesAgo * 60_000,
+  });
+  const recent = evaluateWindow(reading(0, 64), [reading(60, 63), reading(0, 64)], { ...DEFAULT_CONFIG, dailyBudget: false }, now);
+  assert.equal(recent.paceRatio, null);
+  assert.equal(recent.state, "safe");
+  const sustained = evaluateWindow(reading(0, 64), [reading(240, 58), reading(0, 64)], { ...DEFAULT_CONFIG, dailyBudget: false }, now);
+  assert.ok(sustained.paceRatio > 1.3);
+});

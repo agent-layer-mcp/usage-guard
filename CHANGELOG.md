@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- Add a daily budget for weekly windows: an equal share of what is left above
+  the reserve for each remaining local day (08:00 boundary by default). A spent
+  share moves the provider to `protect`, reports borrowed percent, and steps
+  the model down a rung; only the weekly reserve still blocks.
+- Linux: systemd user timer monitor for Claude and Codex, `notify-send` alerts,
+  and Claude Desktop cache ingestion from `~/.config/Claude`.
+- `monitor --provider all` checks both providers in one run.
+- `usage-guard route --kind code|review|plan|bulk` chooses Claude, Codex or a
+  capped pay-as-you-go Hermes (OpenRouter) lane from each lane's daily share;
+  planning and review stay on Claude. New settings: `routingPaused`,
+  `payAsYouGoDailyCapUsd` (default 5), `hermesModel` (default
+  `deepseek/deepseek-v4.1-flash-1017`). The dashboard serves `GET /api/route`
+  previews and `GET /api/models` (OpenRouter tool-calling models, cached a day);
+  the tray has a model picker and cap setting.
+- Master switch: `usage-guard enable|disable` (setting `enabled`). Off makes
+  hooks silent, the monitor idle, `route` a passthrough (exit 3) and the status
+  line `UG off`. `install --disabled --no-integrations` installs inert; on Linux
+  a stopped `usage-guard-serve` user service runs the API for the tray.
+- `tray/`: Tauri 2 tray app (Linux, Windows, macOS) showing each lane's daily
+  share, routing choice, recent decisions, a pause toggle and a user-only
+  Codex banked-reset link.
+- A protect state caused only by a spent daily share never asks for tool
+  approval or denies, including with quality lock on.
+- Default ladders: Claude rung 4 is now `claude-haiku-5-5`; Codex tops out at
+  `gpt-6.1-sol` (`gpt-6-astra` is no longer a default rung).
+
 ## 0.5.1 - 2026-09-29
 
 - Make compaction handoffs defer to the current model-stepping, quality-lock,

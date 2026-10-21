@@ -1,14 +1,34 @@
 import http from "node:http";
+import { listOpenRouterModels } from "./openrouter-models.mjs";
+import { readOpenRouterSpend, routeJob } from "./route.mjs";
 import { completeStatus, syncCodex } from "./service.mjs";
 
 export function startDashboard(store, options = {}) {
   const host = options.host || "127.0.0.1";
+  let spend = { at: 0, value: null };
+  // Tray polls every 30s; read OpenRouter spend at most every 5 minutes.
+  const readSpend = async () => {
+    if (!spend.value || Date.now() - spend.at > 5 * 60_000) {
+      spend = { at: Date.now(), value: await (options.readSpend || readOpenRouterSpend)() };
+    }
+    return spend.value;
+  };
   const port = Number(options.port || store.getConfig().dashboardPort);
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url || "/", `http://${request.headers.host || `${host}:${port}`}`);
       if (request.method === "GET" && url.pathname === "/") return html(response, dashboardHtml());
       if (request.method === "GET" && url.pathname === "/api/status") return json(response, 200, completeStatus(store));
+      if (request.method === "GET" && url.pathname === "/api/route") {
+        // Previews for the tray are not logged; `usage-guard route` records real routing.
+        return json(response, 200, routeJob(store, url.searchParams.get("kind") || "code", {
+          record: false,
+          payAsYouGo: await readSpend(),
+        }));
+      }
+      if (request.method === "GET" && url.pathname === "/api/models") {
+        return json(response, 200, await (options.listModels || listOpenRouterModels)({ refresh: url.searchParams.has("refresh") }));
+      }
       if (request.method === "POST" && url.pathname === "/api/sync/codex") {
         await syncCodex(store);
         return json(response, 200, completeStatus(store));
@@ -20,7 +40,7 @@ export function startDashboard(store, options = {}) {
       }
       return json(response, 404, { error: "Not found" });
     } catch (error) {
-      return json(response, 500, { error: error.message });
+      return json(response, error instanceof TypeError ? 400 : 500, { error: error.message });
     }
   });
 

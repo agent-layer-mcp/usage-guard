@@ -36,9 +36,9 @@ test("stepping defaults on with exact provider IDs, safe effort and all config i
   assert.equal(config.quietHours, null);
   assert.deepEqual(Object.keys(CONFIG_SCHEMA.properties).sort(), Object.keys(config).sort());
   assert.deepEqual(config.modelLadders.claude.map((r) => r.model), [
-    "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001",
+    "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
   ]);
-  assert.deepEqual(config.modelLadders.codex.map((r) => r.model), ["gpt-6-astra", "gpt-6-sol", "gpt-6-sol", "gpt-6-luna"]);
+  assert.deepEqual(config.modelLadders.codex.map((r) => r.model), ["gpt-6.1-sol", "gpt-6.1-sol", "gpt-6-luna", "gpt-6-luna"]);
   for (const ladder of Object.values(config.modelLadders)) {
     assert.ok(ladder.every((r) => !/fable|gpt-5\.5/.test(r.model)));
     assert.ok(ladder.slice(1).every((r) => !["max", "xhigh"].includes(r.effort)));
@@ -109,10 +109,10 @@ test("Codex recommendations use the configured GPT-6 ladder", (t) => {
   const store = fixture(t);
   meter(store, { provider: "codex", short: 20 });
   const value = decision(store, { provider: "codex", role: "standard" });
-  assert.equal(value.recommendedModel, "gpt-6-sol");
-  assert.equal(value.recommendedEffort, "medium");
+  assert.equal(value.recommendedModel, "gpt-6-luna");
+  assert.equal(value.recommendedEffort, "high");
   assert.equal(value.routineModel, "gpt-6-luna");
-  assert.equal(value.routineEffort, "high");
+  assert.equal(value.routineEffort, "medium");
 });
 test("rapid-burn warning steps down an extra rung without ratcheting on each read", (t) => {
   const store = fixture(t, { rapidBurnStepDown: true });
@@ -206,7 +206,7 @@ test("authoritative Codex refresh retires obsolete buckets without deleting thei
   store.saveSnapshot({ provider: "codex", source: "codex-app-server", observedAt: START, model: "gpt-6-sol", effort: "medium", windows, authoritativeWindows: true });
   assert.deepEqual(store.latest("codex").map((w) => w.key), ["codex:primary"]);
   assert.equal(store.history("codex", old.key, null, 0).length, 1);
-  assert.equal(decision(store, { provider: "codex" }).recommendedModel, "gpt-6-astra");
+  assert.equal(decision(store, { provider: "codex" }).recommendedModel, "gpt-6.1-sol");
   store.saveSnapshot({ provider: "codex", source: "late-response", observedAt: START - 60_000, windows: [old], authoritativeWindows: true });
   assert.deepEqual(store.latest("codex").map((w) => w.key), ["codex:primary"]);
 });
@@ -322,7 +322,7 @@ test("custom settings work and unsafe, malformed or unknown settings fail atomic
   badLadder.claude[1].effort = "xhigh";
   assert.throws(() => store.setConfig({ modelLadders: badLadder }), /max or xhigh/);
   badLadder.claude[1].effort = "high";
-  badLadder.claude[3].effort = "medium";
+  badLadder.claude[3] = { model: "claude-haiku-4-5-20251001", effort: "medium" };
   assert.throws(() => store.setConfig({ modelLadders: badLadder }), /Haiku/);
   assert.deepEqual(store.getConfig(), config);
 });

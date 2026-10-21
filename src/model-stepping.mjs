@@ -81,6 +81,12 @@ export function applyModelStepping(store, decision, config, options = {}) {
       windows[w.key] = { rung, resetsAt: w.resetsAt, observedAt: w.observedAt };
       thresholdRung = Math.max(thresholdRung, rung);
       if (rung > 1) causes.push(`${short ? "5-hour" : "weekly"} usable ${w.usablePercent.toFixed(1)}%`);
+      if (w.daily) {
+        const d = w.daily;
+        // A spent daily share steps down one rung; routing elsewhere is the main remedy.
+        if (d.spent) thresholdRung = Math.max(thresholdRung, 2);
+        if (d.spent) causes.push(`today ${d.usedTodayPercent.toFixed(1)}/${d.todayBudgetPercent.toFixed(1)}% of daily share`);
+      }
     }
     const rapidBurn = config.rapidBurnStepDown && decision.windows.some((w) =>
       (w.paceRatio != null && w.paceRatio >= 0.95)

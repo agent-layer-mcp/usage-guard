@@ -74,8 +74,10 @@ test("install and uninstall restore prior status-line settings", () => {
   );
   assert.equal(installedClaude.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, "40");
   assert.deepEqual(
-    inspectConfiguredIntegrations({ homeDir: home, recordPath, platform: "linux" }).map((check) => check.ok),
-    [true, true, true, true, true, true, true, true, true, true],
+    inspectConfiguredIntegrations({ homeDir: home, recordPath, platform: "linux", notifySendPath: process.execPath })
+      .map((check) => check.ok),
+    // The Linux monitor timer was skipped with installMonitor: false.
+    [true, true, true, true, true, true, true, false, true, true],
   );
   assert.equal(
     readFileSync(path.join(stateHome, "node-runtime"), "utf8").trim(),

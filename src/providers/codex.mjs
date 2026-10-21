@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import readline from "node:readline";
 import { VERSION } from "../config.mjs";
 import { toEpochMilliseconds } from "../time.mjs";
@@ -163,4 +166,53 @@ function finiteOrNull(value) {
   if (value == null) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+// Past rate-limit readings from Codex's own session logs (~/.codex/sessions),
+// used to find where usage stood when the local day began.
+export function readCodexLogHistory(options = {}) {
+  const env = options.env || process.env;
+  const root = path.join(env.CODEX_HOME || path.join(os.homedir(), ".codex"), "sessions");
+  const since = options.since ?? 0;
+  const files = [];
+  const walk = (directory, depth) => {
+    let entries = [];
+    try { entries = readdirSync(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory() && depth < 3) walk(full, depth + 1);
+      else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+        try { if (statSync(full).mtimeMs >= since) files.push(full); } catch { /* vanished */ }
+      }
+    }
+  };
+  walk(root, 0);
+  const readings = [];
+  for (const file of files) {
+    let text = "";
+    try { text = readFileSync(file, "utf8"); } catch { continue; }
+    for (const line of text.split("\n")) {
+      if (!line.includes('"rate_limits"')) continue;
+      try {
+        const row = JSON.parse(line);
+        const limits = row.payload?.rate_limits;
+        const observedAt = Date.parse(row.timestamp);
+        if (!limits || !Number.isFinite(observedAt) || observedAt < since) continue;
+        for (const slot of ["primary", "secondary"]) {
+          const window = limits[slot];
+          if (!window || !Number.isFinite(Number(window.used_percent))) continue;
+          const minutes = finiteOrNull(window.window_minutes);
+          readings.push({
+            observedAt,
+            key: `${limits.limit_id || "codex"}:${slot}`,
+            label: labelForDuration(minutes, slot),
+            usedPercent: Number(window.used_percent),
+            windowMinutes: minutes,
+            resetsAt: toEpochMilliseconds(window.resets_at),
+          });
+        }
+      } catch { /* skip a malformed line */ }
+    }
+  }
+  return readings.sort((a, b) => a.observedAt - b.observedAt);
 }

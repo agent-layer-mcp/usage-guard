@@ -26,26 +26,26 @@ after the reserves, in percentage points of the whole allowance.
         "effort": "medium"
       },
       {
-        "model": "claude-haiku-4-5-20251001",
+        "model": "claude-haiku-5-5",
         "effort": "default"
       }
     ],
     "codex": [
       {
-        "model": "gpt-6-astra",
+        "model": "gpt-6.1-sol",
         "effort": "high"
       },
       {
-        "model": "gpt-6-sol",
-        "effort": "high"
-      },
-      {
-        "model": "gpt-6-sol",
+        "model": "gpt-6.1-sol",
         "effort": "medium"
       },
       {
         "model": "gpt-6-luna",
         "effort": "high"
+      },
+      {
+        "model": "gpt-6-luna",
+        "effort": "medium"
       }
     ]
   },
@@ -97,13 +97,13 @@ switching instructions and model-step record.
       "modelStepping": true,
       "recommendedModel": "claude-sonnet-5-5",
       "recommendedEffort": "high",
-      "routineModel": "claude-haiku-4-5-20251001",
+      "routineModel": "claude-haiku-5-5",
       "routineEffort": "default",
       "recommendedRung": 2,
       "routineRung": 4,
       "quotaRung": 4,
       "modelReason": "5-hour usable 20.0%, weekly usable 8.0%; main rung 2, routine rung 4; review stays at rung 2.",
-      "instructions": "Model stepping is on: follow the role-specific recommendation for new tasks. Use one active agent, avoid speculative branches, and keep the strongest appropriate reasoning for planning and final review. The controlling window resets in 1d 2h. Model stepping is on and already authorized: use claude-sonnet-5-5 with high effort for new review work. Use claude-haiku-4-5-20251001 with default effort for routine subagents only. Planning, architecture, finished-work reviews, and money, security, children's data or production work must use the protected main-thread recommendation (never below rung 2). Recheck usage_guard_decision with that role before delegation. Finish the current edit and its checks before switching; switch only between tasks. In Claude Desktop, when available, use mcp__ccd_session_mgmt__set_session_model and mcp__ccd_session_mgmt__set_session_effort with their declared schemas for this session. Claude Code needs version 2.1.284 or newer for this default ladder. Report an applied switch only after the host confirms success. Otherwise launch new work as a subagent with the exact recommended model and effort using the host's supported model/effort parameters. If a host only accepts aliases, resolve them against its verified model mapping first. For default effort, omit the effort parameter and clear any inherited effort override. Never use max or xhigh on a stepped-down rung. If the exact model or effort cannot be selected, keep work queued and report the limitation; do not guess an ID, substitute another model, or ask for stepping authorization again. Usage Guard recommends these changes; it does not itself switch a running host session."
+      "instructions": "Model stepping is on: follow the role-specific recommendation for new tasks. Use one active agent, avoid speculative branches, and keep the strongest appropriate reasoning for planning and final review. The controlling window resets in 1d 2h. Model stepping is on and already authorized: use claude-sonnet-5-5 with high effort for new review work. Use claude-haiku-5-5 with default effort for routine subagents only. Planning, architecture, finished-work reviews, and money, security, children's data or production work must use the protected main-thread recommendation (never below rung 2). Recheck usage_guard_decision with that role before delegation. Finish the current edit and its checks before switching; switch only between tasks. In Claude Desktop, when available, use mcp__ccd_session_mgmt__set_session_model and mcp__ccd_session_mgmt__set_session_effort with their declared schemas for this session. Claude Code needs version 2.1.284 or newer for this default ladder. Report an applied switch only after the host confirms success. Otherwise launch new work as a subagent with the exact recommended model and effort using the host's supported model/effort parameters. If a host only accepts aliases, resolve them against its verified model mapping first. For default effort, omit the effort parameter and clear any inherited effort override. Never use max or xhigh on a stepped-down rung. If the exact model or effort cannot be selected, keep work queued and report the limitation; do not guess an ID, substitute another model, or ask for stepping authorization again. Usage Guard recommends these changes; it does not itself switch a running host session."
     }
   ],
   "recentDecisions": [
@@ -123,7 +123,7 @@ switching instructions and model-step record.
       "routineRung": 4,
       "recommendedModel": "claude-sonnet-5-5",
       "recommendedEffort": "high",
-      "routineModel": "claude-haiku-4-5-20251001",
+      "routineModel": "claude-haiku-5-5",
       "routineEffort": "default",
       "applied": false,
       "rapidBurn": false,

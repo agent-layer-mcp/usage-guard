@@ -7,7 +7,7 @@ import { readPxpipeTelemetry } from "./providers/pxpipe.mjs";
 import {
   estimateRequestImpact,
   providerDecision,
-  syncClaudeDesktop,
+  syncClaude,
   syncCodex,
 } from "./service.mjs";
 
@@ -21,13 +21,14 @@ const STATE_ORDER = Object.freeze({
 });
 
 export async function runMonitorCycle(store, options = {}) {
+  if (store.getConfig().enabled === false) return [];
   const providers = options.providers || ["claude"];
-  const notifier = options.notifier || notifyMacOS;
+  const notifier = options.notifier || notifyDesktop;
   const results = [];
 
   for (const provider of providers) {
     try {
-      if (provider === "claude") syncClaudeDesktop(store, options.claudeDesktop);
+      if (provider === "claude") await syncClaude(store, options);
       else if (provider === "codex") await syncCodex(store, options.codex);
     } catch {
       // Missing or changed provider signals remain visible as stale/missing state.
@@ -75,6 +76,27 @@ export async function runMonitorCycle(store, options = {}) {
   }
 
   return results;
+}
+
+export function notifyDesktop(notification, options = {}) {
+  const platform = options.platform || process.platform;
+  return platform === "linux" ? notifyLinux(notification, options) : notifyMacOS(notification, options);
+}
+
+export function notifyLinux(notification, options = {}) {
+  const run = options.commandRunner || execFileSync;
+  const urgency = notification.state === "queue" ? "critical" : notification.state === "protect" ? "normal" : "low";
+  try {
+    run("notify-send", [
+      "--app-name=Usage Guard",
+      `--urgency=${urgency}`,
+      `${notification.title}: ${notification.subtitle}`,
+      notification.message,
+    ], { encoding: "utf8", stdio: "ignore" });
+    return true;
+  } catch {
+    return false; // No notify-send or no session bus: the state stays visible in status.
+  }
 }
 
 export function notifyMacOS(notification, options = {}) {

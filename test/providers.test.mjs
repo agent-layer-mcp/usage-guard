@@ -202,3 +202,38 @@ test("normalizes arbitrary Codex limit buckets", () => {
   ]);
   assert.deepEqual(snapshot.windows.map((window) => window.label), ["5 hour", "weekly", "Fast weekly"]);
 });
+
+test("Claude usage endpoint: parses windows, polls at most once a minute, falls back offline", async () => {
+  const { parseClaudeUsage, readClaudeCodeToken } = await import("../src/providers/claude-api.mjs");
+  const { syncClaude } = await import("../src/service.mjs");
+  const { GuardStore } = await import("../src/store.mjs");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const parsed = parseClaudeUsage({ five_hour: { utilization: 42, resets_at: "2026-10-21T10:00:00Z" }, seven_day: { utilization: 130, resets_at: null } }, 1);
+  assert.deepEqual(parsed.windows.map((w) => [w.key, w.usedPercent, w.resetsAt]), [["five-hour", 42, Date.parse("2026-10-21T10:00:00Z")], ["seven-day", 100, null]]);
+
+  const dir = mkdtempSync(join(tmpdir(), "ug-claude-api-"));
+  const credentialsPath = join(dir, ".credentials.json");
+  writeFileSync(credentialsPath, JSON.stringify({ claudeAiOauth: { accessToken: "t", expiresAt: 2_000 } }));
+  assert.equal(readClaudeCodeToken({ credentialsPath, now: 1_000 }), "t");
+  assert.equal(readClaudeCodeToken({ credentialsPath, now: 3_000 }), null);
+
+  const store = new GuardStore({ filename: join(dir, "guard.db") });
+  let calls = 0;
+  const fetch = async (url, init) => {
+    calls += 1;
+    assert.equal(init.headers.Authorization, "Bearer t");
+    return { ok: true, json: async () => ({ five_hour: { utilization: 10 }, seven_day: { utilization: 20 } }) };
+  };
+  const claudeApi = { credentialsPath, now: 1_000, fetch };
+  const first = await syncClaude(store, { claudeApi, claudeDesktop: { platform: "none" } });
+  assert.equal(first.source, "claude-oauth-usage");
+  assert.deepEqual(store.latest("claude").map((w) => w.usedPercent), [10, 20]);
+  await syncClaude(store, { claudeApi: { ...claudeApi, now: 30_000 }, claudeDesktop: { platform: "none" } });
+  assert.equal(calls, 1);
+  await syncClaude(store, { claudeApi: { ...claudeApi, now: 61_000 }, claudeDesktop: { platform: "none" } });
+  assert.equal(calls, 1, "expired login is not sent");
+  store.close();
+});

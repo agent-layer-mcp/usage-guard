@@ -27,7 +27,10 @@ export const KNOWN_MODELS = Object.freeze({
     "claude-haiku-5-5", "claude-haiku-4-5", "claude-haiku-4-5-20251001",
   ]),
   // gpt-6-astra is allowed in a custom ladder but used by no preset (it is meant for 3D work).
-  codex: Object.freeze(["gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra"]),
+  // The GPT-5.6 IDs are from Codex's own model catalog (2026-10-21).
+  codex: Object.freeze([
+    "gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-sol-1m", "gpt-5.6-luna", "gpt-5.6-terra",
+  ]),
 });
 
 const rung = (model, effort) => Object.freeze({ model, effort });

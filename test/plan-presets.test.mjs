@@ -40,6 +40,7 @@ test("a custom ladder accepts known higher-tier models and rejects unknown IDs",
   const ladders = structuredClone(DEFAULT_MODEL_LADDERS);
   ladders.claude[0] = { model: "claude-fable-5-1", effort: "high" };
   ladders.codex[0] = { model: "gpt-6-astra", effort: "high" };
+  ladders.codex[3] = { model: "gpt-5.6-luna", effort: "medium" };
   const config = s.setConfig({ modelLadders: ladders });
   assert.equal(config.planPreset, "custom");
   assert.equal(config.modelLadders.claude[0].model, "claude-fable-5-1");

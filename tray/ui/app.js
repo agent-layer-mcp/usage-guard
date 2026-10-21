@@ -42,12 +42,13 @@ function laneHtml(provider, routeLane) {
     : "";
   const shareUsed = d && d.todayBudgetPercent > 0 ? Math.round((d.usedTodayPercent / d.todayBudgetPercent) * 100) : null;
   const notes = [
-    d?.spent ? "Today's share is spent." : shareUsed != null ? `${shareUsed}% of today's ${pct(d.todayBudgetPercent)} share used.` : null,
+    d?.spent ? "Today's share is spent." : shareUsed != null ? `Used ${shareUsed}% of today's share; ${pct(d.remainingTodayPercent)} of the week is left to use today.` : null,
     weekly ? (weekly.resetsAt ? `Week resets in ${countdown(weekly.resetsAt)}.` : "Reset time unknown.") : null,
     baselineNote(d),
     d?.borrowedPercent > 0 ? `${pct(d.borrowedPercent)} borrowed from later days.` : null,
     // Pace pressure (the stamp) explained in words; the daily figures are above.
-    ["watch", "protect", "queue"].includes(provider.state) && !d?.spent ? provider.reason : null,
+    ["watch", "protect"].includes(provider.state) && !d?.spent ? `Pace warning only, still taking work: ${provider.reason}`
+      : provider.state === "queue" ? provider.reason : null,
   ].filter(Boolean).join(" ");
   return `<article class="lane lane-${esc(provider.provider)}"><div class="lane-head"><span class="lane-name"><i class="lane-dot"></i>${NAMES[provider.provider]}</span><span class="stamp ${esc(provider.state)}">${esc(provider.state)}</span></div>${today}${week}<p class="note">${esc(notes)}</p></article>`;
 }

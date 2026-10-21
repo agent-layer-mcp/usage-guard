@@ -62,7 +62,7 @@ fn guard_models(refresh: bool) -> Result<String, String> {
 // Only the settings the panel edits may be changed from here.
 #[tauri::command]
 fn set_config(patch: serde_json::Map<String, serde_json::Value>) -> Result<String, String> {
-    const ALLOWED: [&str; 3] = ["routingPaused", "hermesModel", "payAsYouGoDailyCapUsd"];
+    const ALLOWED: [&str; 4] = ["routingPaused", "hermesModel", "payAsYouGoDailyCapUsd", "planPreset"];
     if patch.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
         return Err("That setting cannot be changed from the tray".into());
     }

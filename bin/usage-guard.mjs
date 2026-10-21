@@ -213,6 +213,7 @@ try {
     store.close();
   } else if (command === "config") {
     if (!args.length) console.log(JSON.stringify(store.getConfig(), null, 2));
+    else if (args[0] === "ladders") console.log(formatLadders(store.getConfig()));
     else {
       const patch = parseConfigArgs(args);
       console.log(JSON.stringify(store.setConfig(patch), null, 2));
@@ -306,11 +307,23 @@ function ingestClaudeUsageOverride(values) {
   });
 }
 
+function formatLadders(config) {
+  const lines = [`plan preset: ${config.planPreset}`];
+  for (const [provider, rungs] of Object.entries(config.modelLadders)) {
+    lines.push(`${provider}: ${rungs.map((r) => `${r.model} (${r.effort})`).join(" → ")}`);
+  }
+  lines.push(`hermes: ${config.hermesModel}`);
+  return lines.join("\n");
+}
+
 function formatRoute(route) {
   const lines = [
     `lane: ${route.lane}${route.model ? ` (${route.model}${route.effort ? `, ${route.effort}` : ""})` : ""}`,
     `reason: ${route.reason}`,
   ];
+  if (route.ladder && route.ladder !== "standard") {
+    lines.push(`models: from your ${route.ladder === "custom" ? "custom ladder" : `${route.ladder} plan preset`}`);
+  }
   for (const lane of route.lanes) {
     const share = lane.subscription
       ? lane.todayBudgetPercent == null ? "no daily share yet"
@@ -536,6 +549,9 @@ Commands:
   sync [claude|codex|all]       Refresh supported provider-local usage meters
   serve [--port 4765]           Run the local dashboard
   config [key value]            Read or change local policy (JSON for arrays/objects)
+  config ladders                Show the model ladder per lane (top rung first)
+  config planPreset lower|standard|high
+                                Set both ladders from a plan preset
   install [--auto-compact-percent 40] [--disabled] [--no-integrations] [--day-time-zone <zone>]
                                 Install plugins, guards, and early compaction.
                                 --disabled: install switched off, monitor stopped.

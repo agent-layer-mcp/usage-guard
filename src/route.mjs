@@ -91,6 +91,8 @@ export function routeJob(store, kind, options = {}) {
     workdir: choice?.workdir || null,
     reason,
     attempts: options.failedAttempts ?? 0,
+    // Which model ladder the lane's model came from: a plan preset or the user's own.
+    ladder: config.planPreset || "standard",
     paused: Boolean(config.routingPaused),
     lanes,
     privacy: "Third-party lanes must never receive .env files, secrets, user data or children's data.",

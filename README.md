@@ -243,6 +243,31 @@ legacy provider decisions and hook behavior. Setting both switches to false
 leaves model choice alone. Upgrading from the old fixed-lock release turns on
 the new default once; explicitly re-enabling the lock thereafter persists.
 
+## Your plan's models
+
+Each lane steps down a four-rung model ladder as its share runs low. Pick the
+ladder that fits your plan:
+
+```bash
+usage-guard config planPreset lower      # Sonnet / Sol medium at the top, Haiku / Luna below
+usage-guard config planPreset standard   # the default: Opus / Sol high at the top
+usage-guard config planPreset high       # keeps Opus / Sol high for longer
+usage-guard config ladders               # show the active ladder per lane
+```
+
+For bigger plans, set your own ladder. Any model in `KNOWN_MODELS`
+(`src/config.mjs`) is accepted, for example Claude Fable or GPT Astra; an
+unknown ID is rejected with the list of known ones:
+
+```bash
+usage-guard config modelLadders '{"claude":[{"model":"claude-fable-5-1","effort":"high"},{"model":"claude-opus-5-5","effort":"high"},{"model":"claude-sonnet-5-5","effort":"high"},{"model":"claude-haiku-5-5","effort":"default"}],"codex":[{"model":"gpt-6.1-sol","effort":"high"},{"model":"gpt-6.1-sol","effort":"medium"},{"model":"gpt-6-luna","effort":"high"},{"model":"gpt-6-luna","effort":"medium"}]}'
+```
+
+A ladder changes which models are used, never the daily share or the weekly
+reserve. `route` and the tray say when a model came from a preset or a custom
+ladder. The Hermes lane's model is set separately (`hermesModel`, or the tray's
+model picker).
+
 ## On/off switch
 
 `usage-guard disable` turns Usage Guard off without uninstalling: hooks return

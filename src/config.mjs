@@ -20,11 +20,57 @@ export const DEFAULT_MODEL_LADDERS = Object.freeze({
   ]),
 });
 
+// Model IDs a ladder may use. Only IDs confirmed for these providers; ask before adding more.
+export const KNOWN_MODELS = Object.freeze({
+  claude: Object.freeze([
+    "claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5-5",
+    "claude-haiku-5-5", "claude-haiku-4-5", "claude-haiku-4-5-20251001",
+  ]),
+  // gpt-6-astra is allowed in a custom ladder but used by no preset (it is meant for 3D work).
+  codex: Object.freeze(["gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra"]),
+});
+
+const rung = (model, effort) => Object.freeze({ model, effort });
+// Plan presets: "standard" is the default ladder; the others only reuse IDs from it.
+export const PLAN_PRESETS = Object.freeze({
+  lower: Object.freeze({
+    claude: Object.freeze([rung("claude-sonnet-5-5", "high"), rung("claude-sonnet-5-5", "medium"),
+      rung("claude-haiku-5-5", "default"), rung("claude-haiku-5-5", "default")]),
+    codex: Object.freeze([rung("gpt-6.1-sol", "medium"), rung("gpt-6-luna", "high"),
+      rung("gpt-6-luna", "medium"), rung("gpt-6-luna", "medium")]),
+  }),
+  standard: DEFAULT_MODEL_LADDERS,
+  high: Object.freeze({
+    claude: Object.freeze([rung("claude-opus-5-5", "high"), rung("claude-opus-5-5", "medium"),
+      rung("claude-sonnet-5-5", "high"), rung("claude-sonnet-5-5", "medium")]),
+    codex: Object.freeze([rung("gpt-6.1-sol", "high"), rung("gpt-6.1-sol", "high"),
+      rung("gpt-6.1-sol", "medium"), rung("gpt-6-luna", "high")]),
+  }),
+});
+
+// Which preset a ladder pair matches, or "custom".
+export function presetFor(ladders) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  return Object.keys(PLAN_PRESETS).find((name) => same(PLAN_PRESETS[name].claude, ladders.claude)
+    && same(PLAN_PRESETS[name].codex, ladders.codex)) || "custom";
+}
+
+// A planPreset in a patch becomes its ladders; explicit ladders set planPreset to match.
+export function expandPlanPreset(patch) {
+  if (patch.planPreset && patch.planPreset !== "custom" && !patch.modelLadders) {
+    if (!PLAN_PRESETS[patch.planPreset]) throw new TypeError("planPreset must be lower, standard or high.");
+    return { ...patch, modelLadders: structuredClone(PLAN_PRESETS[patch.planPreset]) };
+  }
+  if (patch.modelLadders && !patch.planPreset) return { ...patch, planPreset: presetFor(patch.modelLadders) };
+  return patch;
+}
+
 export const DEFAULT_CONFIG = Object.freeze({
   enforcement: "protect",
   modelStepping: true,
   qualityLock: false,
   modelLadders: DEFAULT_MODEL_LADDERS,
+  planPreset: "standard",
   fiveHourStepDownThresholds: Object.freeze([40, 25, 12]),
   weeklyStepDownThresholds: Object.freeze([30, 10]),
   stepUpMarginPercent: 10,
@@ -94,6 +140,7 @@ export function normalizeConfig(input = {}) {
     modelStepping: merged.modelStepping !== false,
     qualityLock: merged.qualityLock === true,
     modelLadders: structuredClone(merged.modelLadders),
+    planPreset: presetFor(merged.modelLadders),
     fiveHourStepDownThresholds: [...merged.fiveHourStepDownThresholds],
     weeklyStepDownThresholds: [...merged.weeklyStepDownThresholds],
     stepUpMarginPercent: clampNumber(merged.stepUpMarginPercent, 0, 50, 10),
@@ -151,6 +198,7 @@ export const CONFIG_SCHEMA = {
       type: "object", additionalProperties: false, required: ["claude", "codex"],
       properties: { claude: ladder, codex: ladder },
     },
+    planPreset: { type: "string", enum: ["lower", "standard", "high", "custom"] },
     fiveHourStepDownThresholds: thresholds(3), weeklyStepDownThresholds: thresholds(2),
     stepUpMarginPercent: percent(50), rapidBurnStepDown: { type: "boolean" },
     quietHours: {
@@ -205,6 +253,9 @@ export function validateConfigPatch(patch) {
     for (const rung of rungs) {
       if (/^claude-haiku-4-5(?:-20251001)?$/.test(rung.model) && rung.effort !== "default") {
         throw new TypeError("Haiku 4.5 requires default effort; it does not support the effort parameter.");
+      }
+      if (!KNOWN_MODELS[provider]?.includes(rung.model)) {
+        throw new TypeError(`${provider}: unknown model "${rung.model}". Known: ${KNOWN_MODELS[provider].join(", ")}.`);
       }
     }
   }

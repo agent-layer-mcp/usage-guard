@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { DEFAULT_CONFIG, databasePath, normalizeConfig, validateConfigPatch } from "./config.mjs";
+import { DEFAULT_CONFIG, databasePath, expandPlanPreset, normalizeConfig, validateConfigPatch } from "./config.mjs";
 
 export class GuardStore {
   constructor(options = {}) {
@@ -419,8 +419,9 @@ export class GuardStore {
     return normalizeConfig({ ...DEFAULT_CONFIG, ...stored });
   }
 
-  setConfig(patch) {
-    validateConfigPatch(patch);
+  setConfig(input) {
+    validateConfigPatch(input);
+    const patch = expandPlanPreset(input);
     const next = normalizeConfig({ ...this.getConfig(), ...patch });
     const upsert = this.database.prepare(`
       INSERT INTO config(key, value) VALUES (?, ?)

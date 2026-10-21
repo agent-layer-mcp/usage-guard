@@ -53,6 +53,18 @@
     </section>
 
     <section class="card">
+      <h2>Your plan's models</h2>
+      <label for="preset">Model ladder (top model first; steps down as a share runs low)</label>
+      <select id="preset">
+        <option value="lower">Lower plan: Sonnet / Sol medium at the top</option>
+        <option value="standard">Standard: Opus / Sol high at the top</option>
+        <option value="high">High: keeps the top model for longer</option>
+        <option value="custom" disabled>Custom (set with usage-guard config modelLadders)</option>
+      </select>
+      <p class="caption" id="ladders"></p>
+    </section>
+
+    <section class="card">
       <div class="card-head"><h2>Recent decisions</h2></div>
       <ol id="decisions" class="decisions"></ol>
     </section>

@@ -71,9 +71,12 @@ async function refresh() {
     $("lanes").innerHTML = status.providers.map((p) => laneHtml(p, Boolean(status.config.routingPaused))).join("") + payAsYouGoHtml(lanes.hermes);
     $("hermes-model").textContent = status.config.hermesModel;
     if (document.activeElement !== $("cap")) $("cap").value = status.config.payAsYouGoDailyCapUsd;
-    $("route-lane").textContent = route.lane === "off" ? "Your own rules (Usage Guard is off)" : route.lane === "wait" ? "Wait for the next share" : `${NAMES[route.lane] || route.lane}${route.model ? ` · ${route.model}` : ""}`;
+    $("route-lane").textContent = route.lane === "off" ? "Your own rules (Usage Guard is off)" : route.lane === "wait" ? "Wait for the next share" : `${NAMES[route.lane] || route.lane}${route.model ? ` · ${route.model}` : ""}${route.ladder && route.ladder !== "standard" && route.model ? ` (your ${route.ladder === "custom" ? "custom ladder" : `${route.ladder} preset`})` : ""}`;
     $("route-reason").textContent = route.reason;
     $("pause").checked = Boolean(status.config.routingPaused);
+    if (document.activeElement !== $("preset")) $("preset").value = status.config.planPreset || "standard";
+    $("ladders").textContent = Object.entries(status.config.modelLadders || {})
+      .map(([lane, rungs]) => `${NAMES[lane]}: ${rungs.map((r) => `${r.model} ${r.effort}`).join(" → ")}`).join(" · ");
     const on = status.config.enabled !== false;
     $("enabled").checked = on;
     $("enabled-label").textContent = on ? "on · guarding" : "off";
@@ -117,6 +120,10 @@ $("model-use").addEventListener("click", async () => {
   refresh();
 });
 $("model-list").addEventListener("dblclick", () => $("model-use").click());
+$("preset").addEventListener("change", async (event) => {
+  try { await invoke("set_config", { patch: { planPreset: event.target.value } }); } catch (error) { $("error").textContent = String(error); $("error").hidden = false; }
+  refresh();
+});
 $("cap-save").addEventListener("click", async () => {
   const value = Number($("cap").value);
   if (!Number.isFinite(value) || value < 0) return;

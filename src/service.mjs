@@ -65,7 +65,6 @@ export function syncClaudeDesktop(store, options = {}) {
   const snapshot = readClaudeDesktopUsage(options);
   if (!snapshot?.windows.length) return snapshot;
 
-  let retainedAuthoritativeReset = false;
   const windows = snapshot.windows.map((window) => {
     if (window.resetsAt != null) return window;
     // Status line or host usage (e.g. balance.mjs) supply the reset the cache lacks.
@@ -73,23 +72,15 @@ export function syncClaudeDesktop(store, options = {}) {
     const authoritative = store.latestFutureReset("claude", window.key, snapshot.observedAt, "host-usage")
       || store.latestFutureReset("claude", window.key, snapshot.observedAt);
     if (authoritative && window.usedPercent + 1 >= authoritative.usedPercent) {
-      retainedAuthoritativeReset = true;
       return { ...window, resetsAt: authoritative.resetsAt };
     }
     // A weekly reset recurs every 7 days, so a past one still fixes the next.
     const known = window.windowMinutes >= 10_080 && !authoritative && store.latestKnownReset("claude", window.key);
     if (!known) return window;
     const week = window.windowMinutes * 60_000;
-    retainedAuthoritativeReset = true;
     return { ...window, resetsAt: known.resetsAt + Math.ceil((snapshot.observedAt - known.resetsAt) / week) * week };
   });
-  const enriched = {
-    ...snapshot,
-    windows,
-    source: retainedAuthoritativeReset
-      ? "claude-desktop-aggregate-cache+status-line-reset"
-      : snapshot.source,
-  };
+  const enriched = { ...snapshot, windows };
   store.saveSnapshot(enriched);
   backfillHistory(store, "claude", (since) => readClaudeDesktopSamples(options)
     .filter((sample) => sample.observedAt >= since)

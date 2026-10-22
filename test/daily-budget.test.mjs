@@ -208,3 +208,14 @@ test("a reset first seen by a different source still counts", () => {
   assert.equal(daily.usedAtDayStartPercent, 2);
   assert.equal(daily.usedTodayPercent, 38);
 });
+
+test("an older suffixed desktop-cache name counts as the same source for the reset check", () => {
+  const resetsAt = DAY_START + 3 * 24 * HOUR;
+  const OLD = "claude-desktop-aggregate-cache+status-line-reset";
+  const history = [
+    { observedAt: DAY_START - HOUR, usedPercent: 50, source: OLD },
+    { observedAt: NOW - HOUR, usedPercent: 58, source: OLD },
+    { observedAt: NOW - 30 * 60_000, usedPercent: 45, source: "claude-desktop-aggregate-cache" }, // a real reset
+  ];
+  assert.equal(evaluateDailyBudget(weekly(55, resetsAt), history, BRISBANE, NOW).usedAtDayStartPercent, 45);
+});

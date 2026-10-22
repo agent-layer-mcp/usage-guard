@@ -5,6 +5,7 @@ const RESET_DROP_PERCENT = 2;
 // Sources can disagree by a few points; a drop that stays above the day's start only counts when large.
 const LARGE_DROP_PERCENT = 10;
 const HOUR = 60 * 60_000;
+const DESKTOP_CACHE_SOURCE = "claude-desktop-aggregate-cache";
 
 // Most recent local day boundary (e.g. 08:00) at or before `now`.
 export function dayStartAt(now, config = {}) {
@@ -53,17 +54,20 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
     { observedAt: now, usedPercent: window.usedPercent, source: window.source }];
   // Sources can disagree by more than a wobble (OAuth vs desktop cache), so a drop only counts
   // against the last reading from the same source, even when other sources' readings sit between.
-  const lastBySource = new Map([[baselineSource, usedAtDayStart]]);
+  // Older rows carry a suffixed name (e.g. "claude-desktop-aggregate-cache+status-line-reset"): same source.
+  const sourceKey = (name) => (typeof name === "string" && name.startsWith(DESKTOP_CACHE_SOURCE) ? DESKTOP_CACHE_SOURCE : name);
+  const lastBySource = new Map([[sourceKey(baselineSource), usedAtDayStart]]);
   for (const item of since) {
     // A source's first reading is checked against the day's start, but only a large drop counts there.
-    const seen = lastBySource.has(item.source);
-    const drop = (seen ? lastBySource.get(item.source) : usedAtDayStart) - item.usedPercent;
+    const key = sourceKey(item.source);
+    const seen = lastBySource.has(key);
+    const drop = (seen ? lastBySource.get(key) : usedAtDayStart) - item.usedPercent;
     if (drop > RESET_DROP_PERCENT && (seen ? item.usedPercent < usedAtDayStart || drop > LARGE_DROP_PERCENT : drop > LARGE_DROP_PERCENT)) {
       usedAtDayStart = item.usedPercent;
       baselineAt = item.observedAt;
       baselineEstimated = false;
     }
-    lastBySource.set(item.source, item.usedPercent);
+    lastBySource.set(key, item.usedPercent);
   }
   usedAtDayStart = Math.min(usedAtDayStart, window.usedPercent);
 

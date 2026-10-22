@@ -123,7 +123,7 @@ test("retains an authoritative status-line reset across Desktop percentage refre
   }));
 
   const snapshot = syncClaudeDesktop(store, { cachePath });
-  assert.equal(snapshot.source, "claude-desktop-aggregate-cache+status-line-reset");
+  assert.equal(snapshot.source, "claude-desktop-aggregate-cache");
   assert.equal(snapshot.windows[0].resetsAt, resetAt);
   assert.equal(store.latest("claude")[0].resetsAt, resetAt);
   store.close();

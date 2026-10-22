@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { guardHome } from "./config.mjs";
-import { HERMES_KINDS, HERMES_MAX_ATTEMPTS, repoAllowed, routeJob } from "./route.mjs";
+import { HERMES_KINDS, HERMES_MAX_ATTEMPTS, localDay, repoAllowed, routeJob } from "./route.mjs";
 
 // Topics that never go to a third-party lane (docs/hermes-jobs.md, "Never to Hermes").
 // Matched on normalised text (see normaliseTask), so these are lowercase word stems.
@@ -124,10 +124,12 @@ export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, 
   // Mark new files as intended, so a job that only adds files (e.g. a new test) still shows in the diff.
   git(worktree, ["add", "--intent-to-add", "--all"], true);
   const diffStat = git(worktree, ["diff", "--stat"], true).stdout.trim();
+  const noCredit = /HTTP 402|credits exhausted/i.test(`${result.stdout}${result.stderr}`);
+  if (noCredit) store.setNoticeState("hermes", "credit-closed", localDay(now), now);
   const summary = {
     kind,
     // Hermes can exit 0 after OpenRouter refuses the turn for lack of credit.
-    ok: !result.error && result.status === 0 && !/HTTP 402|credits exhausted/i.test(`${result.stdout}${result.stderr}`),
+    ok: !result.error && result.status === 0 && !noCredit,
     timedOut,
     exitCode: result.status ?? null,
     model: config.hermesModel,

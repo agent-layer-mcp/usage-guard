@@ -173,6 +173,11 @@ test("a Hermes job that OpenRouter refuses for lack of credit is reported as fai
   });
   t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
   assert.equal(summary.ok, false);
+  // The lane stays closed for the rest of the day, then reopens.
+  const lane = (at) => routeJob(store, "test-write", { now: at, payAsYouGo: hermes, repo, record: false }).lanes.find((l) => l.lane === "hermes");
+  assert.equal(lane(NOW + 60_000).available, false);
+  assert.match(lane(NOW + 60_000).reason, /credit is used up/);
+  assert.equal(lane(NOW + 48 * 3600_000).available, true);
 });
 
 test("task topic refusal survives spelling variants but not look-alike words", () => {

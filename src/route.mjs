@@ -28,7 +28,9 @@ export function routeJob(store, kind, options = {}) {
   const lanes = SUBSCRIPTION_LANES.map((provider) => subscriptionLane(
     buildProviderDecision(store, provider, { now, config, role, record: options.record }), kind,
   ));
-  lanes.push(hermesLane(config, options.payAsYouGo));
+  // A Hermes job that failed with HTTP 402 closes the lane for the rest of the (local) day.
+  const creditClosed = store.getNoticeState("hermes", "credit-closed")?.state === localDay(now);
+  lanes.push(hermesLane(config, creditClosed ? { ...options.payAsYouGo, outOfCredit: true } : options.payAsYouGo));
 
   let choice = null;
   let reason;
@@ -204,6 +206,8 @@ function laneReason(decision, { blocked, spent, verified }) {
   return ["watch", "protect"].includes(decision.state) && !decision.dailyShareOnly ? `${left} ${decision.reason}` : left;
 }
 
+export const localDay = (ms) => new Date(ms).toLocaleDateString("en-CA");
+
 function hermesLane(config, spend) {
   const cap = config.payAsYouGoDailyCapUsd;
   const configured = Boolean(spend?.configured);
@@ -253,6 +257,7 @@ export async function readOpenRouterSpend(options = {}) {
         headers: { Authorization: `Bearer ${key}` },
         signal: AbortSignal.timeout(options.timeoutMs ?? 4000),
       });
+      // /credits needs a management key; an ordinary inference key gets 403, so the balance stays unknown (null).
       const data = credits.ok ? (await credits.json())?.data : null;
       if (Number.isFinite(data?.total_credits) && Number.isFinite(data?.total_usage)) creditsLeft = data.total_credits - data.total_usage;
     } catch {

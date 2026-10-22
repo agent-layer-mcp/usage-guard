@@ -115,3 +115,5 @@ secret-file scan). Not built: the assertion-count check and the automatic Claude
 review; the agent does the review step by hand. The task-text check is a keyword
 filter and cannot detect children's data inside the repo; the opt-in list is the
 real guard. `hermes-job` refuses while Usage Guard is off.
+
+The worktree is not a sandbox: Hermes's tools can read files under HOME.

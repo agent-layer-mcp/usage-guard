@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { guardHome } from "./config.mjs";
@@ -79,7 +79,7 @@ export function findSecretFiles(root) {
 }
 
 // Run one Hermes job in a scratch worktree of `repo`. Refuses unless every rule passes.
-export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, payAsYouGo, env = process.env, now = Date.now(), hermesBin = "hermes", timeoutMs = DEFAULT_TIMEOUT_MS }) {
+export async function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, payAsYouGo, env = process.env, now = Date.now(), hermesBin = "hermes", timeoutMs = DEFAULT_TIMEOUT_MS }) {
   const task = readFileSync(taskFile, "utf8").trim();
   if (!task) throw new HermesJobRefused("The task file is empty.");
   checkTask(kind, task);
@@ -117,9 +117,7 @@ export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, 
 
   const args = ["-p", "dstest", "--provider", "openrouter", "-m", config.hermesModel, "-z", task];
   // shortcut: the task is in argv (visible in `ps`); hermes -z has no stdin or file form, so switch if it gains one.
-  const result = spawnSync(hermesBin, args, {
-    cwd: worktree, env: hermesEnv(env), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: timeoutMs, killSignal: "SIGKILL",
-  });
+  const result = await runHermes(hermesBin, args, { cwd: worktree, env: hermesEnv(env), timeoutMs });
   const timedOut = result.error?.code === "ETIMEDOUT";
   const logFile = path.join(jobDir, "hermes.log");
   writeFileSync(logFile, `${result.stdout || ""}${result.stderr || ""}${result.error ? `\n${result.error.message}` : ""}`, { mode: 0o600 });
@@ -146,6 +144,31 @@ export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, 
   };
   writeFileSync(path.join(jobDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
   return summary;
+}
+
+// Hermes gets its own process group (POSIX) so a timeout kills the tools it started too, not just the direct child.
+function runHermes(bin, args, { cwd, env, timeoutMs }) {
+  const posix = process.platform !== "win32";
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, { cwd, env, detached: posix, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let error;
+    let timedOut = false;
+    child.stdout.setEncoding("utf8").on("data", (d) => { stdout += d; });
+    child.stderr.setEncoding("utf8").on("data", (d) => { stderr += d; });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { posix ? process.kill(-child.pid, "SIGKILL") : child.kill("SIGKILL"); } catch { /* already gone */ }
+    }, timeoutMs);
+    child.on("error", (e) => { error = e; });
+    // "close" waits for the pipes, which a surviving grandchild would hold open; the group kill above ends them.
+    child.on("close", (status) => {
+      clearTimeout(timer);
+      if (timedOut) error = Object.assign(new Error(`hermes timed out after ${timeoutMs}ms`), { code: "ETIMEDOUT" });
+      resolve({ stdout, stderr, status, error });
+    });
+  });
 }
 
 export function formatHermesJob(summary) {

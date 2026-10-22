@@ -194,7 +194,7 @@ try {
     if (!kind || !taskFile) throw new Error("hermes-job needs --kind <type> and --task-file <file>.");
     await bestEffortProviderSyncs();
     try {
-      const summary = runHermesJob(store, {
+      const summary = await runHermesJob(store, {
         kind, taskFile,
         repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
         failedAttempts: numberOption(args, "--failed") ?? 0,

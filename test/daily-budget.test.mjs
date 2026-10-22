@@ -167,3 +167,16 @@ test("a reading still showing last period's reset time is not a mid-period drop"
   ];
   assert.equal(evaluateDailyBudget(weekly(5, resetsAt), history, BRISBANE, NOW).usedAtDayStartPercent, 0);
 });
+
+test("sources that disagree by more than 10 points are not a reset", () => {
+  const resetsAt = DAY_START + 3 * 24 * HOUR;
+  const oauth = "claude-oauth-usage";
+  const history = [
+    { observedAt: DAY_START - HOUR, usedPercent: 30, source: oauth },
+    { observedAt: NOW - 2 * HOUR, usedPercent: 60, source: oauth },
+    { observedAt: NOW - HOUR, usedPercent: 45, source: "claude-desktop-aggregate-cache" },
+  ];
+  const daily = evaluateDailyBudget({ ...weekly(60, resetsAt), source: oauth }, history, BRISBANE, NOW);
+  assert.equal(daily.usedAtDayStartPercent, 30);
+  assert.equal(daily.usedTodayPercent, 30);
+});

@@ -35,6 +35,7 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
   let usedAtDayStart;
   let baselineEstimated = false;
   let baselineAt = null;
+  let baselineSource;
   if (periodStart >= dayStart) {
     usedAtDayStart = 0; // The weekly window itself began today.
   } else {
@@ -42,22 +43,26 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
     const after = samples.find((item) => item.observedAt > dayStart);
     usedAtDayStart = before?.usedPercent ?? after?.usedPercent ?? window.usedPercent;
     baselineEstimated = !before;
+    baselineSource = (before ?? after)?.source;
     // When the starting figure was read: the last reading before the day began, or the first after.
     baselineAt = before?.observedAt ?? after?.observedAt ?? window.observedAt ?? now;
   }
   // A mid-period reset (e.g. a provider restoring the allowance): count today from the reading
   // after the last drop, so the restored share opens now and later use is counted from there.
   const since = [...samples.filter((item) => item.observedAt > (baselineAt ?? periodStart)),
-    { observedAt: now, usedPercent: window.usedPercent }];
+    { observedAt: now, usedPercent: window.usedPercent, source: window.source }];
   let previous = usedAtDayStart;
+  let previousSource = baselineSource;
   for (const item of since) {
     const drop = previous - item.usedPercent;
-    if (drop > RESET_DROP_PERCENT && (item.usedPercent < usedAtDayStart || drop > LARGE_DROP_PERCENT)) {
+    // Sources disagree by more than a wobble (OAuth vs desktop cache); only a drop within one source is a reset.
+    if (item.source === previousSource && drop > RESET_DROP_PERCENT && (item.usedPercent < usedAtDayStart || drop > LARGE_DROP_PERCENT)) {
       usedAtDayStart = item.usedPercent;
       baselineAt = item.observedAt;
       baselineEstimated = false;
     }
     previous = item.usedPercent;
+    previousSource = item.source;
   }
   usedAtDayStart = Math.min(usedAtDayStart, window.usedPercent);
 

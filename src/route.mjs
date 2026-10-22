@@ -26,7 +26,7 @@ export function routeJob(store, kind, options = {}) {
   }
   const role = { review: "review", plan: "planning" }[kind] || (ROUTINE_KINDS.has(kind) ? "routine" : "standard");
   const lanes = SUBSCRIPTION_LANES.map((provider) => subscriptionLane(
-    buildProviderDecision(store, provider, { now, config, role }), kind,
+    buildProviderDecision(store, provider, { now, config, role, record: options.record }), kind,
   ));
   lanes.push(hermesLane(config, options.payAsYouGo));
 
@@ -41,14 +41,16 @@ export function routeJob(store, kind, options = {}) {
     if (codexFirst?.applies) {
       choice = lanes.find((lane) => lane.lane === "codex");
       reason = codexFirst.reason;
-    } else if ((kind === "plan" || kind === "review") && claude) {
+    } else if ((kind === "plan" || kind === "review") && claude?.verified) {
       choice = claude;
       reason = `${kind === "plan" ? "Planning" : "Review"} stays on Claude while its daily share allows.`;
     } else {
       // Third-party lanes never take planning or review, and only take work once both subscriptions are spent.
       const subscriptions = open.filter((lane) => lane.subscription);
       // Both have share: the lane on pace goes first, so an over-pace lane cools off.
+      // A lane with no daily share reports weekly %, a different unit, so it ranks after lanes with one.
       const best = subscriptions.sort((a, b) => (b.verified - a.verified)
+        || (b.hasDailyShare - a.hasDailyShare)
         || (a.overPace - b.overPace)
         || b.remainingTodayPercent - a.remainingTodayPercent)[0] || null;
       const passedOver = subscriptions.find((lane) => lane !== best && lane.overPace && best && !best.overPace
@@ -64,7 +66,7 @@ export function routeJob(store, kind, options = {}) {
       // Routine work skips a lane with no fresh reading when the capped pay-as-you-go lane is open.
       const staleRoutine = best && !best.verified && ROUTINE_KINDS.has(kind);
       choice = (gate?.ok && payAsYouGo) || ((nearlyOut || staleRoutine) && payAsYouGo) || best || payAsYouGo;
-      reason = gate?.ok && choice === payAsYouGo
+      reason = gate?.ok && choice && choice === payAsYouGo
         ? `${kind} goes to ${laneName(choice.lane)} first while it is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
         : !choice ? `No lane has budget for ${kind} work now.${nextShareText(lanes)}`
         : choice.subscription

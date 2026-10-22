@@ -254,3 +254,35 @@ test("stale Claude and spent Codex: code never goes to Codex, routine work goes 
   assert.equal(bulk.lane, "hermes");
   assert.match(bulk.reason, /Claude has no fresh reading, so routine work goes to Hermes/);
 });
+
+test("a Hermes job with no lane open waits instead of crashing", (t) => {
+  // Both subscriptions spent; Hermes at its cap.
+  const store = fixture(t, { claude: [55, 90], codex: [55, 90], config: { hermesRepos: [process.cwd()] } });
+  const route = routeJob(store, "lint-format", { now: NOW, payAsYouGo: hermes(5), repo: process.cwd(), record: false });
+  assert.equal(route.lane, "wait");
+  assert.match(route.reason, /No lane has budget/);
+});
+
+test("planning skips a stale Claude lane when Codex has a fresh reading", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  const later = NOW + HOUR;
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: RESET }] });
+  assert.equal(routeJob(store, "plan", { now: later, payAsYouGo: hermes(0), record: false }).lane, "codex");
+});
+
+test("a lane with no daily share ranks after one with a daily share", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  // Codex loses its reset time, so it reports weekly % (a different unit) instead of today's points.
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: NOW + 60_000,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: null }] });
+  const route = routeJob(store, "code", { now: NOW + 60_000, payAsYouGo: hermes(0), record: false });
+  assert.equal(route.lanes.find((l) => l.lane === "codex").hasDailyShare, false);
+  assert.equal(route.lane, "claude");
+});
+
+test("route previews record no decisions", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  routeJob(store, "code", { now: NOW, payAsYouGo: hermes(0), record: false });
+  assert.equal(store.recentDecisions(50).length, 0);
+});

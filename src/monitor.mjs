@@ -28,7 +28,7 @@ const TIMER_SLACK_MS = 30_000;
 // so a provider's mid-day reset shows within minutes; other lanes are read every 10.
 export function pollDue(store, provider, now = Date.now()) {
   const last = store.getNoticeState(provider, "monitor-poll");
-  const spent = providerDecision(store, provider, { now }).daily?.spent;
+  const spent = providerDecision(store, provider, { now, record: false }).daily?.spent;
   if (last && now - last.updatedAt < (spent ? SPENT_POLL_MS : POLL_MS) - TIMER_SLACK_MS) return false;
   store.setNoticeState(provider, "monitor-poll", "polled", now);
   return true;

@@ -151,3 +151,19 @@ test("a one-point wobble in a whole-% meter is not a reset", () => {
   const history = [{ observedAt: DAY_START - HOUR, usedPercent: 59 }, { observedAt: NOW - HOUR, usedPercent: 64 }, { observedAt: NOW, usedPercent: 63 }];
   assert.equal(evaluateDailyBudget(weekly(63, resetsAt), history, BRISBANE, NOW).usedAtDayStartPercent, 59);
 });
+
+test("a small dip that stays above the day's start is not a reset", () => {
+  const resetsAt = DAY_START + 3 * 24 * HOUR;
+  // A lagging source reads 56 after the API read 60; the day began at 50.
+  const history = [{ observedAt: DAY_START - HOUR, usedPercent: 50 }, { observedAt: NOW - HOUR, usedPercent: 60 }, { observedAt: NOW - 30 * 60_000, usedPercent: 56 }];
+  assert.equal(evaluateDailyBudget(weekly(60, resetsAt), [...history, { observedAt: NOW, usedPercent: 60 }], BRISBANE, NOW).usedAtDayStartPercent, 50);
+});
+
+test("a reading still showing last period's reset time is not a mid-period drop", () => {
+  const resetsAt = NOW + 7 * 24 * HOUR - 2 * HOUR; // this week began 2 hours ago, after the day start
+  const history = [
+    { observedAt: NOW - HOUR, usedPercent: 92, resetsAt: NOW - 2 * HOUR }, // lagging: old period
+    { observedAt: NOW - 30 * 60_000, usedPercent: 3, resetsAt },
+  ];
+  assert.equal(evaluateDailyBudget(weekly(5, resetsAt), history, BRISBANE, NOW).usedAtDayStartPercent, 0);
+});

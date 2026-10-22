@@ -2,6 +2,9 @@ const DAY = 24 * 60 * 60_000;
 const SPENT_MARGIN_PERCENT = 0.5;
 // A weekly meter only falls when the provider resets it; whole-% readings wobble by about 1.
 const RESET_DROP_PERCENT = 2;
+// Sources can disagree by a few points; a drop that stays above the day's start only counts when large.
+const LARGE_DROP_PERCENT = 10;
+const HOUR = 60 * 60_000;
 
 // Most recent local day boundary (e.g. 08:00) at or before `now`.
 export function dayStartAt(now, config = {}) {
@@ -26,7 +29,9 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
   const dayStart = dayStartAt(now, config);
   const periodStart = window.resetsAt - window.windowMinutes * 60_000;
   const reserve = window.reservePercent ?? config.weeklyReservePercent;
-  const samples = (history || []).filter((item) => item.observedAt <= now && item.observedAt >= periodStart);
+  // Readings that still show the previous period (a lagging reset time) belong to that period, not this one.
+  const samples = (history || []).filter((item) => item.observedAt <= now && item.observedAt >= periodStart
+    && (item.resetsAt == null || Math.abs(item.resetsAt - window.resetsAt) < HOUR));
   let usedAtDayStart;
   let baselineEstimated = false;
   let baselineAt = null;
@@ -46,7 +51,8 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
     { observedAt: now, usedPercent: window.usedPercent }];
   let previous = usedAtDayStart;
   for (const item of since) {
-    if (item.usedPercent < previous - RESET_DROP_PERCENT) {
+    const drop = previous - item.usedPercent;
+    if (drop > RESET_DROP_PERCENT && (item.usedPercent < usedAtDayStart || drop > LARGE_DROP_PERCENT)) {
       usedAtDayStart = item.usedPercent;
       baselineAt = item.observedAt;
       baselineEstimated = false;

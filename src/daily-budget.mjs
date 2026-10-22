@@ -1,5 +1,7 @@
 const DAY = 24 * 60 * 60_000;
 const SPENT_MARGIN_PERCENT = 0.5;
+// A weekly meter only falls when the provider resets it; whole-% readings wobble by about 1.
+const RESET_DROP_PERCENT = 2;
 
 // Most recent local day boundary (e.g. 08:00) at or before `now`.
 export function dayStartAt(now, config = {}) {
@@ -37,6 +39,19 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
     baselineEstimated = !before;
     // When the starting figure was read: the last reading before the day began, or the first after.
     baselineAt = before?.observedAt ?? after?.observedAt ?? window.observedAt ?? now;
+  }
+  // A mid-period reset (e.g. a provider restoring the allowance): count today from the reading
+  // after the last drop, so the restored share opens now and later use is counted from there.
+  const since = [...samples.filter((item) => item.observedAt > (baselineAt ?? periodStart)),
+    { observedAt: now, usedPercent: window.usedPercent }];
+  let previous = usedAtDayStart;
+  for (const item of since) {
+    if (item.usedPercent < previous - RESET_DROP_PERCENT) {
+      usedAtDayStart = item.usedPercent;
+      baselineAt = item.observedAt;
+      baselineEstimated = false;
+    }
+    previous = item.usedPercent;
   }
   usedAtDayStart = Math.min(usedAtDayStart, window.usedPercent);
 

@@ -119,3 +119,35 @@ test("Linux monitor installs a systemd user timer for both providers", () => {
   assert.match(readFileSync(monitor.path, "utf8"), /OnUnitActiveSec=1min/);
   assert.deepEqual(calls.at(-1), ["systemctl", "--user", "enable", "--now", "usage-guard-monitor.timer"]);
 });
+
+test("a mid-day reset clears a spent share at the next reading", () => {
+  const resetsAt = DAY_START + 3 * 24 * HOUR;
+  const spentHistory = [{ observedAt: DAY_START - HOUR, usedPercent: 59 }, { observedAt: NOW - HOUR, usedPercent: 75 }];
+  assert.equal(evaluateDailyBudget(weekly(75, resetsAt), spentHistory, BRISBANE, NOW - HOUR).spent, true);
+  // The provider restores the allowance: the next reading shows 0% used.
+  const daily = evaluateDailyBudget(weekly(0, resetsAt), [...spentHistory, { observedAt: NOW, usedPercent: 0 }], BRISBANE, NOW);
+  assert.equal(daily.spent, false);
+  assert.equal(daily.usedAtDayStartPercent, 0);
+  assert.equal(daily.usedTodayPercent, 0);
+  assert.ok(Math.abs(daily.todayBudgetPercent - 95 / 3) < 1e-9); // the whole allowance over the days left
+});
+
+test("after a reset, a same-day climb above the morning figure counts from the reset", () => {
+  const resetsAt = DAY_START + 3 * 24 * HOUR;
+  const history = [
+    { observedAt: DAY_START - HOUR, usedPercent: 20 },
+    { observedAt: NOW - 2 * HOUR, usedPercent: 30 },
+    { observedAt: NOW - HOUR, usedPercent: 1 }, // reset
+    { observedAt: NOW, usedPercent: 26 },
+  ];
+  const daily = evaluateDailyBudget(weekly(26, resetsAt), history, BRISBANE, NOW);
+  assert.equal(daily.usedAtDayStartPercent, 1);
+  assert.equal(daily.usedTodayPercent, 25); // not 6, as counting from the morning's 20 would say
+  assert.equal(daily.baselineAt, NOW - HOUR);
+});
+
+test("a one-point wobble in a whole-% meter is not a reset", () => {
+  const resetsAt = DAY_START + 3 * 24 * HOUR;
+  const history = [{ observedAt: DAY_START - HOUR, usedPercent: 59 }, { observedAt: NOW - HOUR, usedPercent: 64 }, { observedAt: NOW, usedPercent: 63 }];
+  assert.equal(evaluateDailyBudget(weekly(63, resetsAt), history, BRISBANE, NOW).usedAtDayStartPercent, 59);
+});

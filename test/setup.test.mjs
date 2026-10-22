@@ -83,7 +83,7 @@ test("any mix of tools: Claude and Hermes, with a 10-minute check and no Codex c
   const ui = fakeUi([["claude", "hermes"], true, "sk-or-v1-abcdefghijklmnop", true]);
   const result = await runSetup({ ...d, ui });
   assert.equal(result.status, "installed");
-  assert.deepEqual(d.installs[0], { integrations: true, claude: true, codex: false, monitorIntervalMinutes: 10 });
+  assert.deepEqual(d.installs[0], { integrations: true, claude: true, codex: false, monitorIntervalMinutes: 2 });
   assert.deepEqual(d.store.getConfig().trackedProviders, ["claude", "hermes"]);
   assert.equal(d.store.getConfig().staleAfterMinutes, 25);
   const usage = ui.shown.find(([kind, title]) => kind === "note" && title === "Usage now")[2];
@@ -96,7 +96,7 @@ test("Codex only never asks about the Claude login, and a failed first reading i
   const ui = fakeUi([["codex"], true]);
   await runSetup({ ...d, ui });
   assert.ok(!ui.shown.some(([, message]) => /Claude Code login/.test(message || "")));
-  assert.deepEqual(d.installs[0], { integrations: true, claude: false, codex: true, monitorIntervalMinutes: 10 });
+  assert.deepEqual(d.installs[0], { integrations: true, claude: false, codex: true, monitorIntervalMinutes: 2 });
   assert.match(ui.shown.find(([, title]) => title === "Usage now")[2], /Codex: no reading yet \(codex not signed in\)/);
 });
 
@@ -124,7 +124,7 @@ test("--yes with --tools runs without prompts", async (t) => {
   const ui = fakeUi();
   await runSetup({ ...d, ui, options: { yes: true, tools: ["claude", "codex"] } });
   assert.ok(!ui.shown.some(([kind]) => ["confirm", "multiselect", "password"].includes(kind)));
-  assert.deepEqual(d.installs[0], { integrations: true, claude: true, codex: true, monitorIntervalMinutes: 10 });
+  assert.deepEqual(d.installs[0], { integrations: true, claude: true, codex: true, monitorIntervalMinutes: 2 });
 });
 
 test("tools found on the machine start ticked", () => {

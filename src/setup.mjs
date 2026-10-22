@@ -5,6 +5,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export const SETUP_INTERVAL_MINUTES = 10;
+// The timer ticks more often than readings are taken, so a spent lane can be re-read every 2 minutes.
+export const MONITOR_TICK_MINUTES = 2;
 export const TOOLS = Object.freeze(["claude", "codex", "hermes"]);
 const NAMES = { claude: "Claude", codex: "Codex", hermes: "Hermes (OpenRouter)" };
 
@@ -128,10 +130,10 @@ export async function runSetup(deps) {
     integrations: integrate,
     claude: tools.includes("claude"),
     codex: tools.includes("codex"),
-    monitorIntervalMinutes: SETUP_INTERVAL_MINUTES,
+    monitorIntervalMinutes: MONITOR_TICK_MINUTES,
   });
   spin.stop(record.monitor?.enabled
-    ? `Background check runs every ${SETUP_INTERVAL_MINUTES} minutes`
+    ? `Background check runs every ${SETUP_INTERVAL_MINUTES} minutes (every ${MONITOR_TICK_MINUTES} while a share is spent)`
     : "No background check on this system: readings come only from sessions");
 
   // 5. First reading, so the user sees it work.

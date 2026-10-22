@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   findNativeNotifier,
   findTerminalNotifier,
+  pollDue,
   runMonitorCycle,
   notifyMacOS,
 } from "../src/monitor.mjs";
@@ -178,4 +179,21 @@ test("terminal-notifier discovery checks Apple Silicon and Intel Homebrew paths"
     exists: (candidate) => candidate === "/usr/local/bin/terminal-notifier",
   }), "/usr/local/bin/terminal-notifier");
   assert.equal(findTerminalNotifier({ exists: () => false }), null);
+});
+
+test("a spent lane is re-read every 2 minutes, others every 10", () => {
+  const store = new GuardStore({ filename: ":memory:" });
+  const day = Date.UTC(2026, 9, 19, 22, 0); // 08:00 local day start in Brisbane
+  store.setConfig({ dayTimeZone: "Australia/Brisbane" });
+  const at = day + 3 * 60 * 60_000;
+  const save = (usedPercent, observedAt) => store.saveSnapshot({ provider: "codex", source: "test", observedAt,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent, windowMinutes: 10_080, resetsAt: day + 3 * 24 * 60 * 60_000 }] });
+  save(40, day - 60_000);
+  save(41, at);
+  assert.equal(pollDue(store, "codex", at), true);
+  assert.equal(pollDue(store, "codex", at + 2 * 60_000), false); // share left: wait for 10 minutes
+  assert.equal(pollDue(store, "codex", at + 10 * 60_000), true);
+  save(70, at + 10 * 60_000); // today's share now spent
+  assert.equal(pollDue(store, "codex", at + 12 * 60_000), true);
+  assert.equal(pollDue(store, "codex", at + 13 * 60_000), false);
 });

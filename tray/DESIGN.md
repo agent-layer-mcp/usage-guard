@@ -10,7 +10,7 @@ neither does the panel.
 | --- | --- |
 | Canvas / card / tint | `#F4F1EA` / `#FFFFFF` / `#EDE8DE` |
 | Inkwell (dark surfaces, primary buttons) | `#26221D`, text on it `#FBF9F5` |
-| Text primary / secondary / tertiary | `#26221D` / `#6F6A62` / `#A39D93` |
+| Text primary / secondary / tertiary | `#26221D` / `#6F6A62` / `#8A857C` (tertiary darkened from `#A39D93` for legibility of small captions) |
 | Hairline / strong stroke | `rgba(38,34,29,.12)` / `rgba(38,34,29,.22)` |
 | Accent "seal" (also bad) / good / warn | `#C2452D` / `#5F8F6B` / `#B07A45` |
 | Module colours (used for lanes) | home `#B07A45` Claude, money `#4E6E8E` Codex, life `#8E5F7E` Hermes |
@@ -37,6 +37,17 @@ neither does the panel.
 - Cards: white, hairline border, card shadow, ~22px padding.
 - Ink card: inkwell background for the one most important fact (the next job's lane).
 - Mark: three flat planes forming a layered A (`agent-layer-mark.svg`), also the tray icon.
+
+## Layout
+
+- Four tabs, in the tray and the dashboard alike: Overview (next job, on/off and pause, one compact row per lane),
+  Models (Hermes picker, plan ladders), History (recent decisions, banked reset), Settings (spend cap, notes).
+  The choice is remembered per viewer in `localStorage`; tabs use `tablist`/`tab`/`tabpanel` and arrow keys.
+- Spacing scale 4/8/12/16/24/32; type scale 11 / 12.5 / 14 / 16 / 20 / 28. The one accent (seal red) marks the selected tab,
+  focus rings, the headline word and over-budget bars.
+- One shared set of files (`src/ui/`: `style.css`, `panel.js`, `render.js`, `tabs.js`, `format.js`, font, mark) drives both UIs.
+  `tray/ui/` holds identical copies, because the tray bundle cannot import from `src/`; a test fails if they drift.
+  After editing `src/ui/`, copy the files across: `cp -r src/ui/* tray/ui/` (the tray keeps its own `index.html` and `app.js`).
 
 ## Tone
 

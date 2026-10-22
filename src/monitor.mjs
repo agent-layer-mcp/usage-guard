@@ -132,6 +132,7 @@ export function notifyMacOS(notification, options = {}) {
     run(nativeNotifier, args, {
       encoding: "utf8",
       stdio: "ignore",
+      timeout: 5000,
     });
     return true;
   }
@@ -152,6 +153,7 @@ export function notifyMacOS(notification, options = {}) {
     run(terminalNotifier, args, {
       encoding: "utf8",
       stdio: "ignore",
+      timeout: 5000,
     });
     return true;
   }

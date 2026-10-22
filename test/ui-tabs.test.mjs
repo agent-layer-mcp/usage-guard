@@ -117,6 +117,7 @@ test("the dashboard API refuses other hosts and cross-site changes", async (t) =
   const patch = JSON.stringify({ routingPaused: true });
   assert.equal(await send("GET", { host: "attacker.example:4765" }), 403); // DNS rebinding
   assert.equal(await send("PATCH", { "content-type": "application/json", origin: "https://attacker.example" }, patch), 403);
+  assert.equal(await send("PATCH", { "content-type": "application/json", origin: "http://localhost:1" }, patch), 403); // another local port
   assert.equal(store.getConfig().routingPaused, false);
   assert.equal(await send("PATCH", { "content-type": "application/json", origin: dashboard.url }, patch), 200);
   assert.equal(await send("PATCH", { "content-type": "application/json" }, JSON.stringify({ routingPaused: false })), 200); // the tray sends no Origin

@@ -124,7 +124,8 @@ export async function runHermesJob(store, { kind, taskFile, repo, failedAttempts
   // Mark new files as intended, so a job that only adds files (e.g. a new test) still shows in the diff.
   git(worktree, ["add", "--intent-to-add", "--all"], true);
   const diffStat = git(worktree, ["diff", "--stat"], true).stdout.trim();
-  const noCredit = /HTTP 402|credits exhausted/i.test(`${result.stdout}${result.stderr}`);
+  // Conservative: a 402 on stderr, or a failed exit with OpenRouter's own credits wording. Task output that merely mentions "HTTP 402" does not count.
+  const noCredit = /HTTP 402/.test(result.stderr) || (result.status !== 0 && /OpenRouter reported that billing, credits/.test(`${result.stdout}${result.stderr}`));
   if (noCredit) store.setNoticeState("hermes", "credit-closed", localDay(now), now);
   const summary = {
     kind,

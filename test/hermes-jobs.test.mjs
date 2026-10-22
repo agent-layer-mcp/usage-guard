@@ -162,7 +162,7 @@ test("a Hermes job that OpenRouter refuses for lack of credit is reported as fai
   const repo = fakeRepo(t);
   const home = tempDir(t, "ug-home-");
   const bin = path.join(home, "fake-hermes");
-  writeFileSync(bin, `#!/bin/sh\necho "Billing or credits exhausted: HTTP 402"\nexit 0\n`);
+  writeFileSync(bin, `#!/bin/sh\necho "Billing or credits exhausted: HTTP 402" >&2\nexit 0\n`);
   chmodSync(bin, 0o755);
   const taskFile = path.join(home, "task.txt");
   writeFileSync(taskFile, "Add a unit test for src/a.js\n");
@@ -178,6 +178,43 @@ test("a Hermes job that OpenRouter refuses for lack of credit is reported as fai
   assert.equal(lane(NOW + 60_000).available, false);
   assert.match(lane(NOW + 60_000).reason, /credit is used up/);
   assert.equal(lane(NOW + 48 * 3600_000).available, true);
+});
+
+test("HTTP 402 text in Hermes's normal output does not close the lane", async (t) => {
+  const repo = fakeRepo(t);
+  const home = tempDir(t, "ug-402-");
+  const bin = path.join(home, "fake-hermes");
+  writeFileSync(bin, `#!/bin/sh\necho "Documented that the API returns HTTP 402 when credits run out"\nexit 0\n`);
+  chmodSync(bin, 0o755);
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "Add a unit test for src/a.js\n");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const summary = await runHermesJob(store, {
+    kind: "test-write", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: bin,
+    env: { ...process.env, USAGE_GUARD_HOME: home },
+  });
+  t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
+  assert.equal(summary.ok, true);
+  const lane = routeJob(store, "test-write", { now: NOW + 60_000, payAsYouGo: hermes, repo, record: false }).lanes.find((l) => l.lane === "hermes");
+  assert.equal(lane.available, true);
+});
+
+test("a failed exit with OpenRouter's credits message closes the lane even on stdout", async (t) => {
+  const repo = fakeRepo(t);
+  const home = tempDir(t, "ug-402b-");
+  const bin = path.join(home, "fake-hermes");
+  writeFileSync(bin, `#!/bin/sh\necho "OpenRouter reported that billing, credits, or account entitlement is exhausted"\nexit 1\n`);
+  chmodSync(bin, 0o755);
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "Add a unit test for src/a.js\n");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const summary = await runHermesJob(store, {
+    kind: "test-write", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: bin,
+    env: { ...process.env, USAGE_GUARD_HOME: home },
+  });
+  t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
+  const lane = routeJob(store, "test-write", { now: NOW + 60_000, payAsYouGo: hermes, repo, record: false }).lanes.find((l) => l.lane === "hermes");
+  assert.equal(lane.available, false);
 });
 
 test("task topic refusal survives spelling variants but not look-alike words", () => {

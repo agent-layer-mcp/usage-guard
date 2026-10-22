@@ -108,7 +108,7 @@ export function notifyLinux(notification, options = {}) {
       `--urgency=${urgency}`,
       `${notification.title}: ${notification.subtitle}`,
       notification.message,
-    ], { encoding: "utf8", stdio: "ignore" });
+    ], { encoding: "utf8", stdio: "ignore", timeout: 5000 });
     return true;
   } catch {
     return false; // No notify-send or no session bus: the state stays visible in status.
@@ -165,6 +165,7 @@ export function notifyMacOS(notification, options = {}) {
   run("/usr/bin/osascript", ["-e", script], {
     encoding: "utf8",
     stdio: "ignore",
+    timeout: 5000,
   });
   return true;
 }

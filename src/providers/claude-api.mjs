@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,17 +13,35 @@ export function claudeCredentialsPath(options = {}) {
   return path.join(env.CLAUDE_CONFIG_DIR || path.join(options.homeDir ?? os.homedir(), ".claude"), ".credentials.json");
 }
 
+// Where Claude Code keeps its login: the macOS Keychain; on Linux the ~/.claude file,
+// then the Secret Service keyring; elsewhere the file.
+export function claudeLoginSources(options = {}) {
+  if (options.credentialsPath) return ["file"];
+  const platform = options.platform ?? process.platform;
+  return platform === "darwin" ? ["keychain"] : platform === "linux" ? ["file", "keyring"] : ["file"];
+}
+
+function readClaudeLogin(source, options) {
+  const run = options.commandRunner ?? ((command, args) => execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }));
+  if (source === "keychain") return run("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"]);
+  if (source === "keyring") return run("secret-tool", ["lookup", "service", "Claude Code-credentials"]);
+  return readFileSync(options.credentialsPath ?? claudeCredentialsPath(options), "utf8");
+}
+
 // Claude Code's login, or null when it is missing or expired. No other credential is tried.
 export function readClaudeCodeToken(options = {}) {
   const now = options.now ?? Date.now();
-  try {
-    const oauth = JSON.parse(readFileSync(options.credentialsPath ?? claudeCredentialsPath(options), "utf8"))?.claudeAiOauth;
-    if (typeof oauth?.accessToken !== "string" || !oauth.accessToken) return null;
-    if (Number.isFinite(oauth.expiresAt) && oauth.expiresAt <= now) return null;
-    return oauth.accessToken;
-  } catch {
-    return null;
+  for (const source of claudeLoginSources(options)) {
+    try {
+      const oauth = JSON.parse(readClaudeLogin(source, options))?.claudeAiOauth;
+      if (typeof oauth?.accessToken !== "string" || !oauth.accessToken) continue;
+      if (Number.isFinite(oauth.expiresAt) && oauth.expiresAt <= now) continue;
+      return oauth.accessToken;
+    } catch {
+      // Missing or unreadable here; try the next place.
+    }
   }
+  return null;
 }
 
 export function parseClaudeUsage(payload, now = Date.now()) {

@@ -104,6 +104,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   hermesRepos: [],
   // Lean on Codex: code and bulk go to Codex while its weekly % left is at or above this (null: off).
   codexFirstUntilLeftPercent: null,
+  // Which tools the background check reads (chosen in `usage-guard setup`).
+  trackedProviders: ["claude", "codex", "hermes"],
 });
 
 export function guardHome(env = process.env) {
@@ -175,6 +177,9 @@ export function normalizeConfig(input = {}) {
     hermesRepos: Array.isArray(merged.hermesRepos) ? merged.hermesRepos.filter((repo) => typeof repo === "string") : [],
     codexFirstUntilLeftPercent: merged.codexFirstUntilLeftPercent == null ? null
       : clampNumber(merged.codexFirstUntilLeftPercent, 0, 100, null),
+    trackedProviders: Array.isArray(merged.trackedProviders)
+      ? DEFAULT_CONFIG.trackedProviders.filter((provider) => merged.trackedProviders.includes(provider))
+      : [...DEFAULT_CONFIG.trackedProviders],
   };
 }
 
@@ -239,6 +244,7 @@ export const CONFIG_SCHEMA = {
     },
     codexFirstUntilLeftPercent: { anyOf: [{ type: "null" }, { type: "number", minimum: 0, maximum: 100 }] },
     hermesRepos: { type: "array", maxItems: 50, items: { type: "string", pattern: "^/", maxLength: 1024 } },
+    trackedProviders: { type: "array", maxItems: 3, items: { type: "string", enum: ["claude", "codex", "hermes"] } },
   },
 };
 

@@ -51,8 +51,20 @@ Node.js 22 or newer is required. Until the npm package is published, install dir
 
 ```bash
 npm install --global https://github.com/agent-layer-mcp/usage-guard/releases/latest/download/usage-guard.tgz
-usage-guard install
+usage-guard setup
 ```
+
+`usage-guard setup` is a guided install. Run it on your own computer, not in a
+cloud session: it stops in Claude Code on the web, Codespaces and similar, and
+asks first inside a container. Usage is read from the logins on your machine,
+so once it is installed there it also tracks the cloud sessions on the same
+accounts. It lets you pick any mix of Claude, Codex and Hermes (OpenRouter),
+asks before using your Claude Code login (macOS Keychain, or
+`~/.claude/.credentials.json` elsewhere), checks and privately saves your
+OpenRouter key, and sets up a background check every 10 minutes (systemd on
+Linux, launchd on macOS, Task Scheduler on Windows). It finishes with a first
+reading of each tool. For scripts: `usage-guard setup --yes --tools claude,codex`.
+`usage-guard install` remains the non-interactive installer for both tools.
 
 The current release is **0.5.1**. Claude Code **2.1.284 or newer** is required
 for the default Opus/Sonnet 5.5 ladder. `usage-guard doctor` checks the CLI

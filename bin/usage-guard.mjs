@@ -34,6 +34,7 @@ import { GuardStore } from "../src/store.mjs";
 import { readOpenRouterSpend, routeJob } from "../src/route.mjs";
 import { formatHermesJob, HermesJobRefused, runHermesJob } from "../src/hermes-job.mjs";
 import { formatTestRun, runTests } from "../src/test-run.mjs";
+import { runSetup, SetupCancelled, writeOpenRouterKey } from "../src/setup.mjs";
 
 const cliPath = fileURLToPath(import.meta.url);
 const packageRoot = path.resolve(path.dirname(cliPath), "..");
@@ -116,7 +117,7 @@ try {
       throw new Error("Monitor provider must be `claude`, `codex`, or `all`.");
     }
     const runOnce = async () => {
-      const results = await runMonitorCycle(store, { providers: provider === "all" ? ["claude", "codex"] : [provider], claudeApi: {} });
+      const results = await runMonitorCycle(store, { providers: provider === "all" ? store.getConfig().trackedProviders.filter((name) => name !== "hermes") : [provider], claudeApi: {} });
       if (!args.includes("--quiet")) {
         for (const result of results) console.log(formatStatusLine(result.decision, { color: false }));
       }
@@ -218,6 +219,9 @@ try {
       const patch = parseConfigArgs(args);
       console.log(JSON.stringify(store.setConfig(patch), null, 2));
     }
+    store.close();
+  } else if (command === "setup") {
+    await runSetupCommand();
     store.close();
   } else if (command === "install") {
     const disabled = args.includes("--disabled");
@@ -484,6 +488,57 @@ function commandCheck(executable, commandArgs) {
   };
 }
 
+async function runSetupCommand() {
+  // Run from npx's temporary cache: install for good first, so the background check
+  // points at a path that stays put, then continue setup from that copy.
+  if (cliPath.includes(`${path.sep}_npx${path.sep}`)) {
+    console.log("Installing Usage Guard on this machine first (npm install --global)…");
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const installed = spawnSync(npm, ["install", "--global", `@agent-layer/usage-guard@${VERSION}`], { stdio: "inherit" });
+    const bin = installed.status === 0 ? resolveExecutablePath("usage-guard") : null;
+    if (!bin) throw new Error("Couldn't install Usage Guard globally. Run `npm install --global @agent-layer/usage-guard`, then `usage-guard setup`.");
+    const rerun = spawnSync(bin, ["setup", ...args], { stdio: "inherit", shell: process.platform === "win32" });
+    process.exitCode = rerun.status ?? 1;
+    return;
+  }
+  const ui = await import("@clack/prompts");
+  const { readClaudeCodeToken } = await import("../src/providers/claude-api.mjs");
+  const { guardHome } = await import("../src/config.mjs");
+  const { homedir } = await import("node:os");
+  const { existsSync } = await import("node:fs");
+  const toolsArg = stringOption(args, "--tools");
+  try {
+    await runSetup({
+      ui,
+      env: process.env,
+      platform: process.platform,
+      homeDir: homedir(),
+      which: resolveExecutablePath,
+      store,
+      options: {
+        yes: args.includes("--yes"),
+        tools: toolsArg ? toolsArg.split(",").map((tool) => tool.trim()).filter(Boolean) : undefined,
+      },
+      claudeLoginFound: () => Boolean(readClaudeCodeToken()),
+      openRouterKeySaved: () => existsSync(path.join(guardHome(), "openrouter.env")),
+      writeOpenRouterKey: (key) => writeOpenRouterKey(guardHome(), key),
+      readOpenRouterSpend,
+      syncClaude: () => syncClaude(store, { claudeApi: {} }),
+      syncCodex: () => syncCodex(store, { timeoutMs: 10_000 }),
+      install: (options) => installIntegrations({
+        ...options,
+        packageRoot,
+        runtime: { command: process.execPath, argsPrefix: [cliPath] },
+        providerPaths: { claude: resolveExecutablePath("claude"), codex: resolveExecutablePath("codex") },
+      }),
+    });
+  } catch (error) {
+    if (!(error instanceof SetupCancelled)) throw error;
+    ui.cancel(error.message);
+    process.exitCode = 1;
+  }
+}
+
 function resolveExecutablePath(executable) {
   const locator = process.platform === "win32" ? "where" : "which";
   const result = spawnSync(locator, [executable], { encoding: "utf8" });
@@ -556,6 +611,8 @@ Commands:
   config ladders                Show the model ladder per lane (top rung first)
   config planPreset lower|standard|high
                                 Set both ladders from a plan preset
+  setup [--tools claude,codex,hermes] [--yes]
+                                Guided install on this machine: pick tools, check usage every 10 min
   install [--auto-compact-percent 40] [--disabled] [--no-integrations] [--day-time-zone <zone>]
                                 Install plugins, guards, and early compaction.
                                 --disabled: install switched off, monitor stopped.

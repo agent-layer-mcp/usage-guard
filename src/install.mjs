@@ -23,6 +23,7 @@ const MONITOR_LABEL = "sh.agentlayer.usage-guard.monitor";
 const SYSTEMD_UNIT = "usage-guard-monitor";
 const SYSTEMD_SERVE_UNIT = "usage-guard-serve";
 const SYSTEMD_MARKER = "Managed by Usage Guard";
+const WINDOWS_TASK = "Usage Guard monitor";
 const SCREENSHOT_MEMORY_LABEL = "sh.agentlayer.usage-guard.screenshot-memory";
 const SCREENSHOT_MEMORY_PORT = 47_822;
 const SCREENSHOT_MEMORY_URL = `http://127.0.0.1:${SCREENSHOT_MEMORY_PORT}`;
@@ -56,9 +57,10 @@ export function installIntegrations(options = {}) {
     providers: normalizeProviderPaths(options.providerPaths),
     // integrations: false leaves Claude and Codex settings and plugins untouched.
     integrations: options.integrations !== false,
-    codex: options.integrations === false ? null : configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
+    codex: options.integrations === false || options.codex === false
+      ? null : configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
   };
-  if (options.integrations !== false) {
+  if (options.integrations !== false && options.claude !== false) {
     record.screenshotMemory = configureScreenshotMemoryProxy({
       home,
       stateHome,
@@ -100,13 +102,16 @@ export function installIntegrations(options = {}) {
     runtime,
     enabled: options.installMonitor !== false,
     start: options.startMonitor !== false,
+    intervalMinutes: options.monitorIntervalMinutes,
     platform: options.platform,
     uid: options.uid,
     commandRunner: options.commandRunner || runCommand,
   });
 
   if (options.installPlugins !== false && options.integrations !== false && packageRoot) {
-    record.plugins = installPlugins(packageRoot, options.commandRunner || runCommand);
+    record.plugins = installPlugins(packageRoot, options.commandRunner || runCommand, {
+      claude: options.claude !== false, codex: options.codex !== false,
+    });
   }
   writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   return record;
@@ -427,10 +432,12 @@ export function configureNativeNotifier(options = {}) {
 
 export function configureBackgroundMonitor(options = {}) {
   const platform = options.platform || process.platform;
-  if (!["darwin", "linux"].includes(platform) || options.enabled === false || !options.runtime) {
+  if (!["darwin", "linux", "win32"].includes(platform) || options.enabled === false || !options.runtime) {
     return { enabled: false, platform };
   }
-  if (platform === "linux") return configureSystemdMonitor(options);
+  const intervalMinutes = Math.max(1, Math.round(options.intervalMinutes ?? 1));
+  if (platform === "linux") return configureSystemdMonitor({ ...options, intervalMinutes });
+  if (platform === "win32") return configureWindowsMonitor({ ...options, intervalMinutes });
 
   const home = options.home || os.homedir();
   const stateHome = options.stateHome || guardHome();
@@ -445,6 +452,7 @@ export function configureBackgroundMonitor(options = {}) {
     runtime: options.runtime,
     stateHome,
     stdoutPath: path.join(stateHome, "monitor.log"),
+    intervalSeconds: intervalMinutes * 60,
   });
 
   if (existsSync(plistPath)) {
@@ -458,11 +466,21 @@ export function configureBackgroundMonitor(options = {}) {
     label: MONITOR_LABEL,
     path: plistPath,
     previous,
-    intervalSeconds: 60,
+    intervalSeconds: intervalMinutes * 60,
   };
 }
 
-// Linux: a systemd user timer runs one monitor cycle for both providers each minute.
+// Windows: a Task Scheduler task runs one monitor cycle every few minutes.
+// shortcut: the task uses the default ~/.usage-guard (no USAGE_GUARD_HOME); set one in a wrapper if that is ever needed.
+function configureWindowsMonitor(options) {
+  const run = options.commandRunner || runCommand;
+  const command = [options.runtime.command, ...options.runtime.argsPrefix, "monitor", "--once", "--quiet", "--provider", "all"]
+    .map((value) => `"${value}"`).join(" ");
+  run("schtasks", ["/Create", "/F", "/SC", "MINUTE", "/MO", String(options.intervalMinutes), "/TN", WINDOWS_TASK, "/TR", command]);
+  return { enabled: true, label: WINDOWS_TASK, path: WINDOWS_TASK, previous: null, intervalSeconds: options.intervalMinutes * 60 };
+}
+
+// Linux: a systemd user timer runs one monitor cycle for the tracked tools every few minutes.
 function configureSystemdMonitor(options) {
   const home = options.home || os.homedir();
   const stateHome = options.stateHome || guardHome();
@@ -487,11 +505,11 @@ ExecStart=${command}
 `, { mode: 0o600 });
   writeFileSync(timerPath, `# ${SYSTEMD_MARKER}
 [Unit]
-Description=Run the Usage Guard quota monitor every minute
+Description=Run the Usage Guard quota monitor every ${options.intervalMinutes} min
 
 [Timer]
 OnBootSec=1min
-OnUnitActiveSec=1min
+OnUnitActiveSec=${options.intervalMinutes}min
 AccuracySec=15s
 
 [Install]
@@ -514,7 +532,7 @@ WantedBy=default.target
   run("systemctl", ["--user", "daemon-reload"]);
   if (options.start !== false) run("systemctl", ["--user", "enable", "--now", `${SYSTEMD_UNIT}.timer`]);
   return {
-    enabled: true, label: SYSTEMD_UNIT, path: timerPath, servicePath, servePath, previous, intervalSeconds: 60,
+    enabled: true, label: SYSTEMD_UNIT, path: timerPath, servicePath, servePath, previous, intervalSeconds: options.intervalMinutes * 60,
     started: options.start !== false,
   };
 }
@@ -667,6 +685,10 @@ function restoreBackgroundMonitor(record, options = {}) {
     run("systemctl", ["--user", "daemon-reload"], true);
     return;
   }
+  if (platform === "win32") {
+    run("schtasks", ["/Delete", "/F", "/TN", record.label], true);
+    return;
+  }
   if (platform !== "darwin") return;
   const uid = options.uid ?? process.getuid?.();
   run("/bin/launchctl", ["bootout", `gui/${uid}`, record.path], true);
@@ -698,13 +720,17 @@ function restoreNativeNotifier(record) {
   rmSync(record.appPath, { recursive: true, force: true });
 }
 
-function installPlugins(packageRoot, run) {
+function installPlugins(packageRoot, run, tools = { claude: true, codex: true }) {
   const results = [];
-  results.push(run("claude", ["plugin", "marketplace", "add", packageRoot]));
-  results.push(run("claude", ["plugin", "install", "usage-guard@agent-layer", "--scope", "user"]));
-  results.push(run("claude", ["plugin", "update", "usage-guard@agent-layer", "--scope", "user"]));
-  results.push(run("codex", ["plugin", "marketplace", "add", packageRoot, "--json"]));
-  results.push(run("codex", ["plugin", "add", "usage-guard@agent-layer", "--json"]));
+  if (tools.claude) {
+    results.push(run("claude", ["plugin", "marketplace", "add", packageRoot]));
+    results.push(run("claude", ["plugin", "install", "usage-guard@agent-layer", "--scope", "user"]));
+    results.push(run("claude", ["plugin", "update", "usage-guard@agent-layer", "--scope", "user"]));
+  }
+  if (tools.codex) {
+    results.push(run("codex", ["plugin", "marketplace", "add", packageRoot, "--json"]));
+    results.push(run("codex", ["plugin", "add", "usage-guard@agent-layer", "--json"]));
+  }
   return results;
 }
 
@@ -774,14 +800,14 @@ function runtimeCommand(runtime, args = []) {
     .join(" ");
 }
 
-function monitorPlist({ runtime, stateHome, stdoutPath }) {
+function monitorPlist({ runtime, stateHome, stdoutPath, intervalSeconds = 60 }) {
   const args = [
     runtime.command,
     ...runtime.argsPrefix,
     "monitor",
     "--once",
     "--provider",
-    "claude",
+    "all",
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -801,7 +827,7 @@ ${args.map((value) => `    <string>${escapeXml(value)}</string>`).join("\n")}
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>
-  <integer>60</integer>
+  <integer>${intervalSeconds}</integer>
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>

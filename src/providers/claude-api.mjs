@@ -75,6 +75,7 @@ export async function fetchClaudeUsage(options = {}) {
   try {
     const response = await (options.fetch ?? fetch)(CLAUDE_USAGE_URL, {
       headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
+      redirect: "error", // never let the token follow a redirect
       signal: AbortSignal.timeout(Math.min(options.timeoutMs ?? TIMEOUT_MS, remainingMs)),
     });
     if (!response.ok) return null;

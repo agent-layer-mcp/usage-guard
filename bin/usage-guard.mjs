@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installRecordPath, VERSION } from "../src/config.mjs";
@@ -36,7 +36,10 @@ import { formatHermesJob, HermesJobRefused, runHermesJob } from "../src/hermes-j
 import { formatTestRun, runTests } from "../src/test-run.mjs";
 import { runSetup, SetupCancelled, writeOpenRouterKey } from "../src/setup.mjs";
 
-const cliPath = fileURLToPath(import.meta.url);
+// Node resolves the deploy's app -> releases/<ver> symlink; record the stable app path so hooks survive later deploys.
+const realCliPath = fileURLToPath(import.meta.url);
+const stableCliPath = realCliPath.replace(/[\\/]releases[\\/][^\\/]+([\\/]bin[\\/])/, `${path.sep}app$1`);
+const cliPath = stableCliPath !== realCliPath && existsSync(stableCliPath) ? stableCliPath : realCliPath;
 const packageRoot = path.resolve(path.dirname(cliPath), "..");
 const [command = "status", ...args] = process.argv.slice(2);
 const store = new GuardStore();
@@ -505,7 +508,6 @@ async function runSetupCommand() {
   const { readClaudeCodeToken } = await import("../src/providers/claude-api.mjs");
   const { guardHome } = await import("../src/config.mjs");
   const { homedir } = await import("node:os");
-  const { existsSync } = await import("node:fs");
   const toolsArg = stringOption(args, "--tools");
   try {
     await runSetup({

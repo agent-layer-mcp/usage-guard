@@ -196,3 +196,15 @@ test("a reset is still seen when another source's readings sit between", () => {
   assert.equal(daily.usedAtDayStartPercent, 5);
   assert.equal(daily.usedTodayPercent, 1);
 });
+
+test("a reset first seen by a different source still counts", () => {
+  const resetsAt = DAY_START + 3 * 24 * HOUR;
+  const history = [
+    { observedAt: DAY_START - HOUR, usedPercent: 80, source: "claude-oauth-usage" },
+    { observedAt: NOW - 3 * HOUR, usedPercent: 2, source: "claude-status-line" },
+    { observedAt: NOW - 2 * HOUR, usedPercent: 20, source: "claude-status-line" },
+  ];
+  const daily = evaluateDailyBudget({ ...weekly(40, resetsAt), source: "claude-status-line" }, history, BRISBANE, NOW);
+  assert.equal(daily.usedAtDayStartPercent, 2);
+  assert.equal(daily.usedTodayPercent, 38);
+});

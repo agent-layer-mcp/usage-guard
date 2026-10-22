@@ -55,9 +55,10 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
   // against the last reading from the same source, even when other sources' readings sit between.
   const lastBySource = new Map([[baselineSource, usedAtDayStart]]);
   for (const item of since) {
-    const previous = lastBySource.get(item.source);
-    const drop = previous === undefined ? 0 : previous - item.usedPercent;
-    if (drop > RESET_DROP_PERCENT && (item.usedPercent < usedAtDayStart || drop > LARGE_DROP_PERCENT)) {
+    // A source's first reading is checked against the day's start, but only a large drop counts there.
+    const seen = lastBySource.has(item.source);
+    const drop = (seen ? lastBySource.get(item.source) : usedAtDayStart) - item.usedPercent;
+    if (drop > RESET_DROP_PERCENT && (seen ? item.usedPercent < usedAtDayStart || drop > LARGE_DROP_PERCENT : drop > LARGE_DROP_PERCENT)) {
       usedAtDayStart = item.usedPercent;
       baselineAt = item.observedAt;
       baselineEstimated = false;

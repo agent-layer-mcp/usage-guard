@@ -10,7 +10,7 @@ const NEVER_TOPICS = [
   [/(?<!process|meta)\.env\b|secret|passw(or)?d|passphrase|api ?key|(?<!design |lexer )\btokens?\b|credential|private ?key|ssh ?key|\bjwt\b|\bbearer\b|\bcookies?\b/, "secrets"],
   // "auth", "authn", "authz", "authenticate/-or/-ion", "authorize/-ation"; not "author" or "authoring".
   [/\bauth(entic\w*|ori[sz]\w*|[nz]?\b)|\blog ?in\b|\bsign ?in\b|oauth/, "auth"],
-  [/billing|payment|stripe|invoice/, "billing"],
+  [/billing|payment|stripe|invoice|pricing/, "billing"],
   [/\bchild(ren)?\b|\bkids?\b|student|pupil/, "children's data"],
   [/godot/, "Godot work"],
   [/\bdemo\b/, "demo-critical work"],

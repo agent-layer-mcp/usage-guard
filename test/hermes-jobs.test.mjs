@@ -183,10 +183,10 @@ test("a Hermes job that OpenRouter refuses for lack of credit is reported as fai
 test("task topic refusal survives spelling variants but not look-alike words", () => {
   const refused = ["authenticate the user", "add an authenticator app", "fix authn", "check authz rules", "rotate the private_key", "load privateKey",
     "the private-key path", "validate the JWT", "bearer header", "set the cookie", "copy the ssh key", "update /etc/passwd parser", "login credentials form",
-    "Sign-in page", "log in screen", "APIKey helper", "clientSecret field", "authorization header", "OAuth callback", "rotate the auth token", "read the API token", "billing page", "payment form", "edit the .env file", "copy prod.env", "show a token"];
+    "Sign-in page", "log in screen", "APIKey helper", "clientSecret field", "authorization header", "OAuth callback", "rotate the auth token", "read the API token", "billing page", "update the pricing table copy", "payment form", "edit the .env file", "copy prod.env", "show a token"];
   const accepted = ["update the author line in the README", "authoring guide typo", "co-author credit", "authority table", "fix lint errors in src",
     "write unit tests for parseDate", "tokenizer edge cases", "design interface docs",
-    "read process.env.NODE_ENV", "rename design tokens", "fix lexer tokens", "explain subscription tiers in docs", "update the pricing table copy", "use import.meta.env"];
+    "read process.env.NODE_ENV", "rename design tokens", "fix lexer tokens", "explain subscription tiers in docs", "use import.meta.env"];
   for (const task of refused) assert.throws(() => checkTask("test-write", task), HermesJobRefused, task);
   for (const task of accepted) assert.doesNotThrow(() => checkTask("test-write", task), task);
 });

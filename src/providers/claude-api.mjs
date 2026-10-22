@@ -26,8 +26,11 @@ export function claudeLoginSources(options = {}) {
   return platform === "darwin" ? ["keychain"] : platform === "linux" ? ["file", "keyring"] : ["file"];
 }
 
+// execFile treats a timeout of 0 as none, so a spent budget still gets 1 ms.
+export const loginReadTimeout = (budgetMs) => Math.max(1, Math.min(LOGIN_READ_MS, budgetMs ?? Infinity));
+
 async function readClaudeLogin(source, options) {
-  const timeout = Math.min(LOGIN_READ_MS, options.budgetMs ?? Infinity);
+  const timeout = loginReadTimeout(options.budgetMs);
   const run = options.commandRunner ?? (async (command, args) => (await execFileAsync(command, args, { encoding: "utf8", timeout })).stdout);
   if (source === "keychain") return run("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"]);
   if (source === "keyring") return run("secret-tool", ["lookup", "service", "Claude Code-credentials"]);

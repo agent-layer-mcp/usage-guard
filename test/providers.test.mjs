@@ -269,4 +269,10 @@ test("Claude usage call stays inside its time budget", async () => {
   const out = await fetchClaudeUsage({ platform: "darwin", commandRunner: slow, fetch: async () => { called = true; return { ok: false }; }, budgetMs: 100 });
   assert.equal(out, null);
   assert.equal(called, false);
+  // The login read's own timeout is capped by the budget and never 0 (execFile reads 0 as "no timeout").
+  const { loginReadTimeout } = await import("../src/providers/claude-api.mjs");
+  assert.equal(loginReadTimeout(0), 1);
+  assert.equal(loginReadTimeout(-50), 1);
+  assert.equal(loginReadTimeout(100), 100);
+  assert.ok(loginReadTimeout(undefined) > 1 && Number.isFinite(loginReadTimeout(undefined)));
 });

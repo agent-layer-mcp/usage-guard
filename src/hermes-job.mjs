@@ -2,15 +2,15 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { guardHome } from "./config.mjs";
-import { HERMES_KINDS, HERMES_MAX_ATTEMPTS, repoAllowed, routeJob } from "./route.mjs";
+import { HERMES_KINDS, HERMES_MAX_ATTEMPTS, localDay, repoAllowed, routeJob } from "./route.mjs";
 
 // Topics that never go to a third-party lane (docs/hermes-jobs.md, "Never to Hermes").
 // Matched on normalised text (see normaliseTask), so these are lowercase word stems.
 const NEVER_TOPICS = [
-  [/\.env\b|secret|passw(or)?d|passphrase|api ?key|\btokens?\b|credential|private ?key|ssh ?key|\bjwt\b|\bbearer\b|\bcookies?\b/, "secrets"],
+  [/(?<!process|meta)\.env\b|secret|passw(or)?d|passphrase|api ?key|(?<!design |lexer )\btokens?\b|credential|private ?key|ssh ?key|\bjwt\b|\bbearer\b|\bcookies?\b/, "secrets"],
   // "auth", "authn", "authz", "authenticate/-or/-ion", "authorize/-ation"; not "author" or "authoring".
   [/\bauth(entic\w*|ori[sz]\w*|[nz]?\b)|\blog ?in\b|\bsign ?in\b|oauth/, "auth"],
-  [/billing|payment|stripe|invoice|pricing|subscription/, "billing"],
+  [/billing|payment|stripe|invoice/, "billing"],
   [/\bchild(ren)?\b|\bkids?\b|student|pupil/, "children's data"],
   [/godot/, "Godot work"],
   [/\bdemo\b/, "demo-critical work"],
@@ -25,7 +25,9 @@ const SKIP_DIRS = new Set([".git", "node_modules"]);
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 // The only environment Hermes sees: its OpenRouter key lives in the "dstest" profile under HOME (~/.hermes/profiles/dstest/.env),
 // so HOME must pass; OPENROUTER_API_KEY passes too in case the profile relies on it. No other tokens (Anthropic, GitHub, ...) leak.
-const HERMES_ENV = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL", "TZ", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "OPENROUTER_API_KEY", "USAGE_GUARD_HOME"];
+const HERMES_ENV = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL", "TZ", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "OPENROUTER_API_KEY", "USAGE_GUARD_HOME",
+  "HERMES_HOME", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+  ...(process.platform === "win32" ? ["SystemRoot", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"] : [])];
 
 export class HermesJobRefused extends Error {}
 
@@ -124,10 +126,12 @@ export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, 
   // Mark new files as intended, so a job that only adds files (e.g. a new test) still shows in the diff.
   git(worktree, ["add", "--intent-to-add", "--all"], true);
   const diffStat = git(worktree, ["diff", "--stat"], true).stdout.trim();
+  const noCredit = /HTTP 402|credits exhausted/i.test(`${result.stdout}${result.stderr}`);
+  if (noCredit) store.setNoticeState("hermes", "credit-closed", localDay(now), now);
   const summary = {
     kind,
     // Hermes can exit 0 after OpenRouter refuses the turn for lack of credit.
-    ok: !result.error && result.status === 0 && !/HTTP 402|credits exhausted/i.test(`${result.stdout}${result.stderr}`),
+    ok: !result.error && result.status === 0 && !noCredit,
     timedOut,
     exitCode: result.status ?? null,
     model: config.hermesModel,

@@ -419,3 +419,24 @@ test("the Linux monitor service has a start timeout", () => {
   });
   assert.match(readFileSync(monitor.servicePath, "utf8"), /^TimeoutStartSec=120$/m);
 });
+
+test("a skipped codex step keeps the earlier codex record", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-install-"));
+  const home = path.join(root, "home");
+  const stateHome = path.join(root, "state");
+  const recordPath = path.join(stateHome, "install-record.json");
+  mkdirSync(path.join(home, ".claude"), { recursive: true });
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  const cliPath = path.join(root, "usage-guard.mjs");
+  writeFileSync(cliPath, "#!/usr/bin/env node\n");
+  writeFileSync(path.join(home, ".codex", "config.toml"), "[tui]\nstatus_line = [\"model\"]\n");
+  const options = { homeDir: home, stateHome, recordPath, installPlugins: false, installMonitor: false, platform: "linux",
+    runtime: { command: process.execPath, argsPrefix: [cliPath] }, providerPaths: { claude: process.execPath, codex: process.execPath } };
+  installIntegrations(options);
+  const first = JSON.parse(readFileSync(recordPath, "utf8")).codex;
+  assert.ok(first, "first install records codex");
+  for (const skip of [{ codex: false }, { integrations: false }]) {
+    installIntegrations({ ...options, ...skip });
+    assert.deepEqual(JSON.parse(readFileSync(recordPath, "utf8")).codex, first);
+  }
+});

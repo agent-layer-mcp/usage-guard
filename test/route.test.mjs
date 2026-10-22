@@ -292,6 +292,11 @@ test("Hermes closes when OpenRouter credit is used up, before its daily cap", as
   const spend = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
     fetch: async (url) => reply(url.endsWith("/credits") ? { total_credits: 10, total_usage: 10.02 } : { usage_daily: 0.01, limit_remaining: null }) });
   assert.equal(spend.outOfCredit, true);
+  // An ordinary inference key gets 403 from /credits: the balance is unknown, not zero.
+  const unknown = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
+    fetch: async (url) => (url.endsWith("/credits") ? { ok: false, status: 403 } : reply({ usage_daily: 0.01, limit_remaining: 5 })) });
+  assert.equal(unknown.outOfCredit, false);
+  assert.equal(unknown.creditLeftUsd, null);
   const store = fixture(t, { claude: [55, 90], codex: [55, 90] });
   const hermesLane = routeJob(store, "code", { now: NOW, payAsYouGo: spend, record: false }).lanes.find((l) => l.lane === "hermes");
   assert.equal(hermesLane.available, false);

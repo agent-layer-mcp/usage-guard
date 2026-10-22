@@ -74,7 +74,7 @@ export function installIntegrations(options = {}) {
   };
   const run = options.commandRunner || runCommand;
   step("codex", () => (options.integrations === false || options.codex === false
-    ? null : configureCodex(path.join(home, ".codex", "config.toml"), stateHome, existingRecord.codex)));
+    ? existingRecord.codex ?? null : configureCodex(path.join(home, ".codex", "config.toml"), stateHome, existingRecord.codex)));
   if (options.integrations !== false && options.claude !== false) {
     step("screenshotMemory", () => configureScreenshotMemoryProxy({
       home,

@@ -73,7 +73,7 @@ export function hermesText(lane) {
   const left = Math.max(0, lane.dailyCapUsd - lane.spentTodayUsd);
   return {
     tone: lane.available ? "good" : "spent",
-    pill: lane.available ? "Open · under cap" : "Cap reached",
+    pill: lane.available ? "Open · under cap" : lane.outOfCredit ? "No credit" : "Cap reached",
     figure: `$${lane.spentTodayUsd.toFixed(2)} of $${Number(lane.dailyCapUsd).toFixed(2)}`,
     detail: `$${lane.spentTodayUsd.toFixed(2)} spent today · $${left.toFixed(2)} left. Takes work when both subscriptions are nearly spent, and its own job types in opted-in repos.`,
   };

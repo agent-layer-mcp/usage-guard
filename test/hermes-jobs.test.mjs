@@ -173,14 +173,20 @@ test("a Hermes job that OpenRouter refuses for lack of credit is reported as fai
   });
   t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
   assert.equal(summary.ok, false);
+  // The lane stays closed for the rest of the day, then reopens.
+  const lane = (at) => routeJob(store, "test-write", { now: at, payAsYouGo: hermes, repo, record: false }).lanes.find((l) => l.lane === "hermes");
+  assert.equal(lane(NOW + 60_000).available, false);
+  assert.match(lane(NOW + 60_000).reason, /credit is used up/);
+  assert.equal(lane(NOW + 48 * 3600_000).available, true);
 });
 
 test("task topic refusal survives spelling variants but not look-alike words", () => {
   const refused = ["authenticate the user", "add an authenticator app", "fix authn", "check authz rules", "rotate the private_key", "load privateKey",
     "the private-key path", "validate the JWT", "bearer header", "set the cookie", "copy the ssh key", "update /etc/passwd parser", "login credentials form",
-    "Sign-in page", "log in screen", "APIKey helper", "clientSecret field", "authorization header", "OAuth callback"];
+    "Sign-in page", "log in screen", "APIKey helper", "clientSecret field", "authorization header", "OAuth callback", "rotate the auth token", "read the API token", "billing page", "payment form", "edit the .env file", "copy prod.env", "show a token"];
   const accepted = ["update the author line in the README", "authoring guide typo", "co-author credit", "authority table", "fix lint errors in src",
-    "write unit tests for parseDate", "tokenizer edge cases", "design interface docs"];
+    "write unit tests for parseDate", "tokenizer edge cases", "design interface docs",
+    "read process.env.NODE_ENV", "rename design tokens", "fix lexer tokens", "explain subscription tiers in docs", "update the pricing table copy", "use import.meta.env"];
   for (const task of refused) assert.throws(() => checkTask("test-write", task), HermesJobRefused, task);
   for (const task of accepted) assert.doesNotThrow(() => checkTask("test-write", task), task);
 });
@@ -288,4 +294,9 @@ test("symlinks that leave the worktree are refused, ones that stay inside are fi
     kind: "lint-format", taskFile, repo, payAsYouGo: hermes, now: NOW, env: { ...process.env, USAGE_GUARD_HOME: home }, hermesBin: "/bin/false",
   }), /symlinks that leave it \((docs-link, dangling|dangling, docs-link)\)/);
   assert.equal(spawnSync("git", ["-C", repo, "worktree", "list"], { encoding: "utf8" }).stdout.trim().split("\n").length, 1);
+});
+
+test("Hermes env passes proxy and CA settings but no secrets", () => {
+  const env = hermesEnv({ HERMES_HOME: "/h", HTTPS_PROXY: "p", https_proxy: "p", NO_PROXY: "n", SSL_CERT_FILE: "c", REQUESTS_CA_BUNDLE: "b", ANTHROPIC_API_KEY: "x", GITHUB_TOKEN: "y" });
+  assert.deepEqual(Object.keys(env).sort(), ["HERMES_HOME", "HTTPS_PROXY", "NO_PROXY", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "https_proxy"]);
 });

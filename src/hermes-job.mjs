@@ -1,49 +1,83 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { guardHome } from "./config.mjs";
 import { HERMES_KINDS, HERMES_MAX_ATTEMPTS, repoAllowed, routeJob } from "./route.mjs";
 
 // Topics that never go to a third-party lane (docs/hermes-jobs.md, "Never to Hermes").
+// Matched on normalised text (see normaliseTask), so these are lowercase word stems.
 const NEVER_TOPICS = [
-  [/\.env\b|secret|password|api[ _-]?key|\btokens?\b|credential|private key/i, "secrets"],
-  [/\bauth(entication|orization)?\b|\blog ?in\b|sign[ -]?in|oauth|session cookie/i, "auth"],
-  [/billing|payment|stripe|invoice|pricing|subscription/i, "billing"],
-  [/\bchild(ren)?\b|\bkids?\b|student|pupil/i, "children's data"],
-  [/godot/i, "Godot work"],
-  [/\bdemo\b/i, "demo-critical work"],
+  [/\.env\b|secret|passw(or)?d|passphrase|api ?key|\btokens?\b|credential|private ?key|ssh ?key|\bjwt\b|\bbearer\b|\bcookies?\b/, "secrets"],
+  // "auth", "authn", "authz", "authenticate/-or/-ion", "authorize/-ation"; not "author" or "authoring".
+  [/\bauth(entic\w*|ori[sz]\w*|[nz]?\b)|\blog ?in\b|\bsign ?in\b|oauth/, "auth"],
+  [/billing|payment|stripe|invoice|pricing|subscription/, "billing"],
+  [/\bchild(ren)?\b|\bkids?\b|student|pupil/, "children's data"],
+  [/godot/, "Godot work"],
+  [/\bdemo\b/, "demo-critical work"],
 ];
 // Files that must not be in the scratch worktree.
-const SECRET_FILE = /^(\.env(\..*)?|.*\.pem|.*\.key|id_rsa.*|id_ed25519.*|credentials(\..*)?|.*\.p12)$/i;
+const SECRET_FILE = new RegExp(`^(${[
+  "\\.env(\\..*)?", ".*\\.pem", ".*\\.key", "id_rsa.*", "id_ecdsa.*", "id_ed25519.*", "credentials(\\..*)?", "credentials.*\\.json",
+  ".*\\.p12", ".*\\.pfx", ".*\\.keystore", ".*\\.jks", "\\.npmrc", "\\.netrc", "\\.pgpass", "\\.git-credentials",
+  ".*\\.tfvars", "service-account.*\\.json",
+].join("|")})$`, "i");
 const SKIP_DIRS = new Set([".git", "node_modules"]);
+const DEFAULT_TIMEOUT_MS = 20 * 60_000;
+// The only environment Hermes sees: its OpenRouter key lives in the "dstest" profile under HOME (~/.hermes/profiles/dstest/.env),
+// so HOME must pass; OPENROUTER_API_KEY passes too in case the profile relies on it. No other tokens (Anthropic, GitHub, ...) leak.
+const HERMES_ENV = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL", "TZ", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "OPENROUTER_API_KEY", "USAGE_GUARD_HOME"];
 
 export class HermesJobRefused extends Error {}
+
+export function hermesEnv(env) {
+  return Object.fromEntries(HERMES_ENV.filter((name) => env[name] !== undefined).map((name) => [name, env[name]]));
+}
+
+// "fixPrivateKey", "private_key" and "private-key" all become "private key".
+export function normaliseTask(task) {
+  return task.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").replace(/[_-]/g, " ").toLowerCase();
+}
 
 export function checkTask(kind, task) {
   if (!HERMES_KINDS.includes(kind)) {
     throw new HermesJobRefused(`${kind} is not a Hermes job kind (${HERMES_KINDS.join(", ")}); planning and review never go to Hermes.`);
   }
-  const hit = NEVER_TOPICS.find(([pattern]) => pattern.test(task));
+  const text = normaliseTask(task);
+  const hit = NEVER_TOPICS.find(([pattern]) => pattern.test(text));
   if (hit) throw new HermesJobRefused(`The task mentions ${hit[1]}, which never goes to Hermes.`);
 }
 
-export function findSecretFiles(root, depth = 6) {
-  const found = [];
-  const walk = (dir, level) => {
+// Walks the whole tree (minus .git and node_modules). Symlinks are not followed; one whose target
+// leaves `root` (or cannot be resolved) would hand Hermes files outside the worktree.
+export function scanWorktree(root) {
+  const secrets = [];
+  const escapingLinks = [];
+  const realRoot = realpathSync(root);
+  const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        let target;
+        try { target = realpathSync(full); } catch { target = path.resolve(dir, readlinkSync(full)); }
+        if (target !== realRoot && !target.startsWith(realRoot + path.sep)) escapingLinks.push(path.relative(root, full));
+      }
       if (entry.isDirectory()) {
-        if (!SKIP_DIRS.has(entry.name) && level < depth) walk(path.join(dir, entry.name), level + 1);
+        if (!SKIP_DIRS.has(entry.name)) walk(full);
       } else if (SECRET_FILE.test(entry.name)) {
-        found.push(path.relative(root, path.join(dir, entry.name)));
+        secrets.push(path.relative(root, full));
       }
     }
   };
-  walk(root, 0);
-  return found;
+  walk(root);
+  return { secrets, escapingLinks };
+}
+
+export function findSecretFiles(root) {
+  return scanWorktree(root).secrets;
 }
 
 // Run one Hermes job in a scratch worktree of `repo`. Refuses unless every rule passes.
-export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, payAsYouGo, env = process.env, now = Date.now(), hermesBin = "hermes" }) {
+export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, payAsYouGo, env = process.env, now = Date.now(), hermesBin = "hermes", timeoutMs = DEFAULT_TIMEOUT_MS }) {
   const task = readFileSync(taskFile, "utf8").trim();
   if (!task) throw new HermesJobRefused("The task file is empty.");
   checkTask(kind, task);
@@ -62,15 +96,29 @@ export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, 
   const worktree = path.join(jobDir, "worktree");
   mkdirSync(jobDir, { recursive: true });
   // A detached worktree of committed files only: untracked .env files and local data are not copied.
-  git(repoRoot, ["worktree", "add", "--detach", worktree, "HEAD"]);
-  const secrets = findSecretFiles(worktree);
-  if (secrets.length) {
-    git(repoRoot, ["worktree", "remove", "--force", worktree]);
-    throw new HermesJobRefused(`The repo has committed secret-like files (${secrets.slice(0, 5).join(", ")}); Hermes jobs cannot run on it.`);
+  // Whatever goes wrong before Hermes runs (a refusal, EACCES while scanning), the worktree must not be left behind.
+  try {
+    git(repoRoot, ["worktree", "add", "--detach", worktree, "HEAD"]);
+    const { secrets, escapingLinks } = scanWorktree(worktree);
+    if (secrets.length) {
+      throw new HermesJobRefused(`The repo has committed secret-like files (${secrets.slice(0, 5).join(", ")}); Hermes jobs cannot run on it.`);
+    }
+    if (escapingLinks.length) {
+      throw new HermesJobRefused(`The repo has symlinks that leave it (${escapingLinks.slice(0, 5).join(", ")}); Hermes jobs cannot run on it.`);
+    }
+  } catch (error) {
+    spawnSync("chmod", ["-R", "u+rwx", worktree], { stdio: "ignore" }); // an unreadable directory would block the removal
+    spawnSync("git", ["-C", repoRoot, "worktree", "remove", "--force", worktree], { stdio: "ignore" });
+    spawnSync("git", ["-C", repoRoot, "worktree", "prune"], { stdio: "ignore" });
+    throw error;
   }
 
   const args = ["-p", "dstest", "--provider", "openrouter", "-m", config.hermesModel, "-z", task];
-  const result = spawnSync(hermesBin, args, { cwd: worktree, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  // shortcut: the task is in argv (visible in `ps`); hermes -z has no stdin or file form, so switch if it gains one.
+  const result = spawnSync(hermesBin, args, {
+    cwd: worktree, env: hermesEnv(env), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: timeoutMs, killSignal: "SIGKILL",
+  });
+  const timedOut = result.error?.code === "ETIMEDOUT";
   const logFile = path.join(jobDir, "hermes.log");
   writeFileSync(logFile, `${result.stdout || ""}${result.stderr || ""}${result.error ? `\n${result.error.message}` : ""}`, { mode: 0o600 });
   // Mark new files as intended, so a job that only adds files (e.g. a new test) still shows in the diff.
@@ -79,6 +127,7 @@ export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, 
   const summary = {
     kind,
     ok: !result.error && result.status === 0,
+    timedOut,
     exitCode: result.status ?? null,
     model: config.hermesModel,
     attempt: failedAttempts + 1,
@@ -96,7 +145,7 @@ export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, 
 
 export function formatHermesJob(summary) {
   return [
-    `${summary.ok ? "Done" : "Hermes failed"} (${summary.kind}, ${summary.model}, attempt ${summary.attempt})`,
+    `${summary.ok ? "Done" : summary.timedOut ? "Hermes timed out and was killed" : "Hermes failed"} (${summary.kind}, ${summary.model}, attempt ${summary.attempt})`,
     `Worktree: ${summary.worktree}`,
     summary.diffStat ? `Changes:\n${summary.diffStat}` : "Changes: none",
     `Full log: ${summary.logFile}`,

@@ -780,6 +780,13 @@ function removePlugins(run) {
   run("codex", ["plugin", "marketplace", "remove", "agent-layer"], true);
 }
 
+// "already ..." always counts; "exists", "configured" and "installed" count unless negated ("not installed").
+export function isAlreadyPresent(message) {
+  if (/\balready\b/i.test(message)) return true;
+  return /\b(?:exists|configured|installed)\b/i.test(message)
+    && !/\b(?:not|no|never|cannot|can't|isn't|aren't|un)\b|n't\b|\bfail(?:ed|ure)?\b/i.test(message);
+}
+
 function runCommand(command, args, allowFailure = false) {
   try {
     const output = execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -787,7 +794,7 @@ function runCommand(command, args, allowFailure = false) {
   } catch (error) {
     const message = String(error.stderr || error.message || "Command failed").trim();
     // A missing program (ENOENT) is a real failure, whatever its message says.
-    if (allowFailure || (error.code !== "ENOENT" && /\balready\b/i.test(message))) {
+    if (allowFailure || (error.code !== "ENOENT" && isAlreadyPresent(message))) {
       return { command: `${command} ${args.join(" ")}`, ok: true, output: message };
     }
     throw new Error(`${command} integration failed: ${message}`);

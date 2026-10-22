@@ -14,6 +14,7 @@ import { parse } from "smol-toml";
 import {
   configureBackgroundMonitor,
   AUTO_COMPACT_WINDOW,
+  isAlreadyPresent,
   configureNativeNotifier,
   configureScreenshotMemoryProxy,
   inspectConfiguredIntegrations,
@@ -438,5 +439,16 @@ test("a skipped codex step keeps the earlier codex record", () => {
   for (const skip of [{ codex: false }, { integrations: false }]) {
     installIntegrations({ ...options, ...skip });
     assert.deepEqual(JSON.parse(readFileSync(recordPath, "utf8")).codex, first);
+  }
+});
+
+test("an already-installed plugin counts as success, a failure that merely mentions install does not", () => {
+  for (const ok of ["Plugin usage-guard is already installed", "Marketplace agent-layer already exists",
+    "agent-layer already added", "Plugin exists", "Marketplace is configured", "usage-guard is installed"]) {
+    assert.equal(isAlreadyPresent(ok), true, ok);
+  }
+  for (const bad of ["Plugin usage-guard is not installed", "Error: no marketplace configured", "Failed to read installed plugins",
+    "network error", "spawn claude ENOENT", "Plugin does not exist"]) {
+    assert.equal(isAlreadyPresent(bad), false, bad);
   }
 });

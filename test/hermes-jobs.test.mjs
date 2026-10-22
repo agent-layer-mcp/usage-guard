@@ -120,6 +120,7 @@ test("hermes-job runs in a scratch worktree without untracked .env files", (t) =
   assert.ok(summary.worktree.startsWith(path.join(home, "jobs")));
   assert.doesNotMatch(readFileSync(path.join(summary.worktree, "seen.txt"), "utf8"), /\.env/);
   assert.match(summary.diffStat, /src\/a\.js/);
+  assert.match(summary.diffStat, /seen\.txt/); // new files count as changes
   assert.match(readFileSync(summary.logFile, "utf8"), /-p dstest --provider openrouter/);
   assert.ok(existsSync(path.join(path.dirname(summary.logFile), "summary.json")));
 });

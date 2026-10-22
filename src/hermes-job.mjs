@@ -73,6 +73,8 @@ export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, 
   const result = spawnSync(hermesBin, args, { cwd: worktree, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   const logFile = path.join(jobDir, "hermes.log");
   writeFileSync(logFile, `${result.stdout || ""}${result.stderr || ""}${result.error ? `\n${result.error.message}` : ""}`, { mode: 0o600 });
+  // Mark new files as intended, so a job that only adds files (e.g. a new test) still shows in the diff.
+  git(worktree, ["add", "--intent-to-add", "--all"], true);
   const diffStat = git(worktree, ["diff", "--stat"], true).stdout.trim();
   const summary = {
     kind,

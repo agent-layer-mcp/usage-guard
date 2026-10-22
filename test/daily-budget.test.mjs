@@ -180,3 +180,19 @@ test("sources that disagree by more than 10 points are not a reset", () => {
   assert.equal(daily.usedAtDayStartPercent, 30);
   assert.equal(daily.usedTodayPercent, 30);
 });
+
+test("a reset is still seen when another source's readings sit between", () => {
+  const resetsAt = DAY_START + 3 * 24 * HOUR;
+  const oauth = "claude-oauth-usage";
+  const cache = "claude-desktop-aggregate-cache";
+  const history = [
+    { observedAt: DAY_START - HOUR, usedPercent: 30, source: oauth },
+    { observedAt: NOW - 3 * HOUR, usedPercent: 60, source: oauth },
+    { observedAt: NOW - 2 * HOUR, usedPercent: 58, source: cache },
+    { observedAt: NOW - HOUR, usedPercent: 5, source: oauth },
+    { observedAt: NOW - HOUR / 2, usedPercent: 58, source: cache },
+  ];
+  const daily = evaluateDailyBudget({ ...weekly(6, resetsAt), source: oauth }, history, BRISBANE, NOW);
+  assert.equal(daily.usedAtDayStartPercent, 5);
+  assert.equal(daily.usedTodayPercent, 1);
+});

@@ -51,18 +51,18 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
   // after the last drop, so the restored share opens now and later use is counted from there.
   const since = [...samples.filter((item) => item.observedAt > (baselineAt ?? periodStart)),
     { observedAt: now, usedPercent: window.usedPercent, source: window.source }];
-  let previous = usedAtDayStart;
-  let previousSource = baselineSource;
+  // Sources can disagree by more than a wobble (OAuth vs desktop cache), so a drop only counts
+  // against the last reading from the same source, even when other sources' readings sit between.
+  const lastBySource = new Map([[baselineSource, usedAtDayStart]]);
   for (const item of since) {
-    const drop = previous - item.usedPercent;
-    // Sources disagree by more than a wobble (OAuth vs desktop cache); only a drop within one source is a reset.
-    if (item.source === previousSource && drop > RESET_DROP_PERCENT && (item.usedPercent < usedAtDayStart || drop > LARGE_DROP_PERCENT)) {
+    const previous = lastBySource.get(item.source);
+    const drop = previous === undefined ? 0 : previous - item.usedPercent;
+    if (drop > RESET_DROP_PERCENT && (item.usedPercent < usedAtDayStart || drop > LARGE_DROP_PERCENT)) {
       usedAtDayStart = item.usedPercent;
       baselineAt = item.observedAt;
       baselineEstimated = false;
     }
-    previous = item.usedPercent;
-    previousSource = item.source;
+    lastBySource.set(item.source, item.usedPercent);
   }
   usedAtDayStart = Math.min(usedAtDayStart, window.usedPercent);
 

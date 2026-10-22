@@ -121,3 +121,23 @@ test("the dashboard API refuses other hosts and cross-site changes", async (t) =
   assert.equal(await send("PATCH", { "content-type": "application/json", origin: dashboard.url }, patch), 200);
   assert.equal(await send("PATCH", { "content-type": "application/json" }, JSON.stringify({ routingPaused: false })), 200); // the tray sends no Origin
 });
+
+test("a failed model-list load does not stick over later refreshes", async () => {
+  const { mountPanel } = await import("../src/ui/panel.js");
+  const els = new Map();
+  const el = (id) => {
+    if (!els.has(id)) els.set(id, { id, dataset: {}, style: {}, classList: { toggle() {} }, value: "", hidden: false, textContent: "", innerHTML: "",
+      addEventListener() {}, click() {}, querySelector: () => null, querySelectorAll: () => [], matches: () => false });
+    return els.get(id);
+  };
+  const root = { getElementById: el, querySelectorAll: () => [], querySelector: () => ({ addEventListener() {} }), body: { classList: { toggle() {} } }, activeElement: null, defaultView: {} };
+  const status = { config: { hermesModel: "m", modelLadders: {}, payAsYouGoDailyCapUsd: 1 }, providers: [], recentDecisions: [] };
+  const api = { status: async () => status, route: async () => ({ lanes: [], lane: "claude", reason: "" }), models: async () => { throw new Error("models down"); } };
+  const realInterval = globalThis.setInterval;
+  globalThis.setInterval = () => 0; // mountPanel starts a poll timer that would keep the test process alive
+  const panel = mountPanel({ api, root, storage: memoryStorage() });
+  globalThis.setInterval = realInterval;
+  await new Promise((r) => setTimeout(r, 20));
+  await panel.refresh();
+  assert.equal(el("error").hidden, true, "later successful refresh clears the model error");
+});

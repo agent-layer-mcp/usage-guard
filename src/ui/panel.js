@@ -168,12 +168,15 @@ export function mountPanel({ api, root = document, wide = false, decisionLimit =
 
   let models = [];
   const renderModels = () => { $("model-list").innerHTML = modelOptionsHtml(models, $("model-search").value); };
-  const loadModels = (refreshList = false) => guard(async () => {
-    const list = await api.models(refreshList);
-    models = list.models;
-    renderModels();
-    if (list.stale) $("model-hint").dataset.stale = "1";
-  });
+  // A model-list failure is shown but not sticky, so later refresh results can replace it.
+  const loadModels = async (refreshList = false) => {
+    try {
+      const list = await api.models(refreshList);
+      models = list.models;
+      renderModels();
+      if (list.stale) $("model-hint").dataset.stale = "1";
+    } catch (error) { fail(error); }
+  };
   $("model-search").addEventListener("input", renderModels);
   $("model-refresh").addEventListener("click", () => loadModels(true));
   $("model-use").addEventListener("click", () => { if ($("model-list").value) patch({ hermesModel: $("model-list").value }); });

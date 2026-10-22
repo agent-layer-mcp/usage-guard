@@ -88,3 +88,10 @@ test("route, ladders and decisions render escaped text", () => {
   assert.match(rows, /&lt;b&gt;x&lt;\/b&gt;.*a &amp; b/);
   assert.equal((rows.match(/<li>/g) || []).length, 1);
 });
+
+test("back-to-back identical decisions collapse into one line with a count", () => {
+  const same = { createdAt: 0, provider: "claude", action: "observe", reason: "fine" };
+  const html = decisionsHtml([same, same, same, { ...same, provider: "codex" }, same]);
+  assert.equal((html.match(/<li>/g) || []).length, 3);
+  assert.match(html, /observe <small>×3<\/small>/);
+});

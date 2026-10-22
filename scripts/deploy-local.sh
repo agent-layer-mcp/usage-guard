@@ -26,8 +26,12 @@ echo "$version" > "$release/DEPLOYED_VERSION"
 
 # app is a symlink to a release dir; switching it with rename(2) is atomic.
 # First run on an old layout: app is a real directory, so move it into releases/ once.
+# The old app.prev was a real directory too: replace it with a link to the moved copy, so rollback still works.
 if [[ -d "$root/app" && ! -L "$root/app" ]]; then
-  mv "$root/app" "$root/releases/legacy-$(date +%s)"
+  legacy="$root/releases/legacy-$(date +%s)"
+  mv "$root/app" "$legacy"
+  [[ -d "$root/app.prev" && ! -L "$root/app.prev" ]] && rm -rf "$root/app.prev"
+  ln -sfn "$legacy" "$root/app.prev"
 fi
 old="$(readlink "$root/app" 2>/dev/null || true)"
 ln -sfn "$release" "$root/app.tmp"
@@ -35,10 +39,6 @@ mv -T "$root/app.tmp" "$root/app"
 if [[ -n "$old" && "$old" != "$release" ]]; then
   ln -sfn "$old" "$root/app.prev.tmp"
   mv -T "$root/app.prev.tmp" "$root/app.prev"
-elif [[ ! -e "$root/app.prev" ]]; then
-  # Migrated from the old layout with no symlink to point at: roll back to the legacy copy.
-  legacy="$(ls -d "$root"/releases/legacy-* 2>/dev/null | tail -1 || true)"
-  [[ -n "$legacy" ]] && ln -sfn "$legacy" "$root/app.prev"
 fi
 # Keep only the live and previous releases.
 keep_a="$(readlink "$root/app")"; keep_b="$(readlink "$root/app.prev" 2>/dev/null || true)"

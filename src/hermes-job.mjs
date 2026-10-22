@@ -25,7 +25,9 @@ const SKIP_DIRS = new Set([".git", "node_modules"]);
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 // The only environment Hermes sees: its OpenRouter key lives in the "dstest" profile under HOME (~/.hermes/profiles/dstest/.env),
 // so HOME must pass; OPENROUTER_API_KEY passes too in case the profile relies on it. No other tokens (Anthropic, GitHub, ...) leak.
-const HERMES_ENV = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL", "TZ", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "OPENROUTER_API_KEY", "USAGE_GUARD_HOME"];
+const HERMES_ENV = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL", "TZ", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "OPENROUTER_API_KEY", "USAGE_GUARD_HOME",
+  "HERMES_HOME", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+  ...(process.platform === "win32" ? ["SystemRoot", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"] : [])];
 
 export class HermesJobRefused extends Error {}
 

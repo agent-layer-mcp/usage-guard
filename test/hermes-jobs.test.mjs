@@ -294,3 +294,8 @@ test("symlinks that leave the worktree are refused, ones that stay inside are fi
   }), /symlinks that leave it \((docs-link, dangling|dangling, docs-link)\)/);
   assert.equal(spawnSync("git", ["-C", repo, "worktree", "list"], { encoding: "utf8" }).stdout.trim().split("\n").length, 1);
 });
+
+test("Hermes env passes proxy and CA settings but no secrets", () => {
+  const env = hermesEnv({ HERMES_HOME: "/h", HTTPS_PROXY: "p", https_proxy: "p", NO_PROXY: "n", SSL_CERT_FILE: "c", REQUESTS_CA_BUNDLE: "b", ANTHROPIC_API_KEY: "x", GITHUB_TOKEN: "y" });
+  assert.deepEqual(Object.keys(env).sort(), ["HERMES_HOME", "HTTPS_PROXY", "NO_PROXY", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "https_proxy"]);
+});

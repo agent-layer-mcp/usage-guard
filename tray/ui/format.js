@@ -78,3 +78,14 @@ export function hermesText(lane) {
     detail: `$${lane.spentTodayUsd.toFixed(2)} spent today · $${left.toFixed(2)} left. Takes work when both subscriptions are nearly spent, and its own job types in opted-in repos.`,
   };
 }
+
+// The daily cap box: empty or blank must not become $0, and the server (config.mjs schema) rejects above 1000.
+export const CAP_MAX_USD = 1000;
+export function parseCap(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw) return { error: "Enter a daily cap in US$." };
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) return { error: "The cap must be a number of dollars, 0 or more." };
+  if (value > CAP_MAX_USD) return { error: `The cap can be at most $${CAP_MAX_USD}.` };
+  return { value };
+}

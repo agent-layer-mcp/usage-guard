@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { countdown, hermesText, paceText, staleText, statusPill, todayText, weekText } from "../tray/ui/format.js";
+import { countdown, parseCap, hermesText, paceText, staleText, statusPill, todayText, weekText } from "../tray/ui/format.js";
 
 const NOW = Date.UTC(2026, 9, 21, 0, 0);
 const daily = { usedTodayPercent: 2, todayBudgetPercent: 13.1, remainingTodayPercent: 11.1, borrowedPercent: 0, spent: false };
@@ -64,4 +64,12 @@ test("spent share says so, and a stale lane with no share says no fresh reading"
   assert.match(todayText(spent).detail, /^Today's share is used up/);
   assert.equal(todayText(null, { stale: true }).figure, "no fresh reading");
   assert.doesNotMatch(todayText(null, { stale: true }).detail, /reset time/);
+});
+
+test("the daily cap rejects empty, blank, negative, non-numeric and over-limit values", () => {
+  assert.deepEqual(parseCap("12.5"), { value: 12.5 });
+  assert.deepEqual(parseCap(" 0 "), { value: 0 });
+  assert.deepEqual(parseCap("1000"), { value: 1000 });
+  for (const bad of ["", "   ", null, undefined, "-1", "abc", "1000.01", "1e9"]) assert.ok(parseCap(bad).error, `rejects ${JSON.stringify(bad)}`);
+  assert.match(parseCap("1001").error, /\$1000/);
 });

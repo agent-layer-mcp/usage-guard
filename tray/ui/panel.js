@@ -1,5 +1,6 @@
 // The whole Usage Guard panel (tabs, screens, behaviour), shared by the tray and the dashboard.
 // The host supplies an `api` adapter, so this file never knows whether it runs in Tauri or a browser.
+import { parseCap } from "./format.js";
 import { PRIVACY, decisionsHtml, esc, ladderHtml, laneHtml, modelOptionsHtml, payAsYouGoHtml, recommendationsHtml, routeTitle } from "./render.js";
 import { initTabs, panelsHtml, tabsHtml } from "./tabs.js";
 
@@ -23,7 +24,7 @@ const SCREENS = {
         <div class="control"><strong>Routing</strong>${switchHtml("pause", "Pause routing", "pause routing", "caution")}</div>
       </section>
     </div>
-    <section id="lanes" class="lanes" aria-live="polite"></section>
+    <section id="lanes" class="lanes"></section>
     <p class="legend"><b>Today</b> = your daily share. <b>Week</b> = the whole week's allowance. Shares are in points: 1 pt = 1% of the week. Meters report whole %, so today's use is ±1 pt.</p>`,
   models: () => `
     <div class="models-grid">
@@ -67,6 +68,7 @@ const SCREENS = {
       <h2>Hermes daily spend cap</h2>
       <label for="cap">Daily spend cap (US$)</label>
       <div class="actions"><input type="number" id="cap" min="0" max="1000" step="0.5"><button type="button" class="btn btn-secondary" id="cap-save">Save cap</button></div>
+      <p class="caption cap-error" id="cap-error" role="alert" hidden></p>
     </section>
     <section class="card">
       <h2>How it works</h2>
@@ -81,8 +83,12 @@ const SCREENS = {
 export function mountPanel({ api, root = document, wide = false, decisionLimit = 6, storage, onData }) {
   const $ = (id) => root.getElementById(id);
   const panel = (id) => root.getElementById(`panel-${id}`);
-  const fail = (error) => { $("error").textContent = String(error); $("error").hidden = false; };
-  const guard = async (work) => { try { await work(); } catch (error) { fail(error); } };
+  // A failed save's error is "sticky": background refreshes leave it up until the next user action or a successful save.
+  let sticky = false;
+  const fail = (error, keep = false) => { sticky = keep; $("error").textContent = String(error); $("error").hidden = false; };
+  const clearError = () => { sticky = false; $("error").hidden = true; };
+  const guard = async (work) => { clearError(); try { await work(); } catch (error) { fail(error, true); } };
+  let lanesHtml = "";
   const openLanes = new Map();
 
   for (const id of Object.keys(SCREENS)) panel(id).innerHTML = SCREENS[id]("08:00");
@@ -96,12 +102,19 @@ export function mountPanel({ api, root = document, wide = false, decisionLimit =
   async function refresh() {
     try {
       const [status, route] = await Promise.all([api.status(), api.route()]);
-      $("error").hidden = true;
+      if (!sticky) $("error").hidden = true;
       const config = status.config;
       const lanes = Object.fromEntries(route.lanes.map((lane) => [lane.lane, lane]));
       $("eyebrow").textContent = `usage guard · local only · day starts ${config.dayStartTime || "08:00"}`;
-      $("lanes").innerHTML = status.providers.map((p) => laneHtml(p, { paused: Boolean(config.routingPaused), wide, open: isOpen(p.provider) })).join("")
+      const html = status.providers.map((p) => laneHtml(p, { paused: Boolean(config.routingPaused), wide, open: isOpen(p.provider) })).join("")
         + payAsYouGoHtml(lanes.hermes, { open: isOpen("hermes") });
+      // Only touch the DOM when the lanes changed, and put keyboard focus back on the same lane's summary.
+      if (html !== lanesHtml) {
+        lanesHtml = html;
+        const focused = root.activeElement?.matches?.("details.more > summary") ? root.activeElement.parentElement.dataset.lane : null;
+        $("lanes").innerHTML = html;
+        if (focused) $("lanes").querySelector(`details.more[data-lane="${focused}"] > summary`)?.focus();
+      }
       $("route-lane").textContent = routeTitle(route);
       $("route-reason").textContent = route.reason;
       $("pause").checked = Boolean(config.routingPaused);
@@ -125,7 +138,7 @@ export function mountPanel({ api, root = document, wide = false, decisionLimit =
       if (root.activeElement !== $("cap")) $("cap").value = config.payAsYouGoDailyCapUsd;
       onData?.(status, route, on);
     } catch (error) {
-      fail(error);
+      if (!sticky) fail(error);
       onData?.(null, null, null, error);
     }
   }
@@ -142,9 +155,12 @@ export function mountPanel({ api, root = document, wide = false, decisionLimit =
   }
   $("pause").addEventListener("change", (event) => patch({ routingPaused: event.target.checked }));
   $("preset").addEventListener("change", (event) => patch({ planPreset: event.target.value }));
+  const capError = (text) => { $("cap-error").textContent = text || ""; $("cap-error").hidden = !text; };
+  $("cap").addEventListener("input", () => capError(""));
   $("cap-save").addEventListener("click", () => {
-    const value = Number($("cap").value);
-    if (Number.isFinite(value) && value >= 0) patch({ payAsYouGoDailyCapUsd: value });
+    const { value, error } = parseCap($("cap").value);
+    capError(error);
+    if (!error) patch({ payAsYouGoDailyCapUsd: value });
   });
   $("banked").addEventListener("click", () => {
     if (root.defaultView.confirm("Open Codex's usage page? Spending the banked reset there is your choice; Usage Guard never does it.")) api.openCodexUsage();
@@ -166,5 +182,5 @@ export function mountPanel({ api, root = document, wide = false, decisionLimit =
   loadModels();
   refresh();
   setInterval(refresh, wide ? 15_000 : 30_000);
-  return { refresh };
+  return { refresh, fail: (error) => fail(error, true), clearError };
 }

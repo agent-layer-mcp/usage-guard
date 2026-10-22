@@ -151,7 +151,8 @@ export function dashboardHtml() {
     sync.onclick = async () => {
       sync.disabled = true;
       sync.textContent = "Syncing";
-      try { await send("/api/sync/codex", { method: "POST" }); await panel.refresh(); } finally { sync.disabled = false; sync.textContent = "Sync Codex"; }
+      panel.clearError();
+      try { await send("/api/sync/codex", { method: "POST" }); await panel.refresh(); } catch (error) { panel.fail(error); } finally { sync.disabled = false; sync.textContent = "Sync Codex"; }
     };
   </script>
 </body>

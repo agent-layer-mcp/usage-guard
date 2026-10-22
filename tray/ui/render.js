@@ -24,7 +24,7 @@ export function baselineNote(d) {
 
 export const pill = ({ tone, text }) => `<span class="stamp ${tone}">${esc(text)}</span>`;
 const metric = (label, barHtml, figure) =>
-  `<div class="metric"><span class="m-label">${esc(label)}</span>${barHtml}<span class="m-figure">${esc(figure)}</span></div>`;
+  `<div class="metric"><span class="m-label" title="${esc(label)}">${esc(label)}</span>${barHtml}<span class="m-figure">${esc(figure)}</span></div>`;
 const detail = (label, text) => `<p class="detail"><b>${label}</b>${esc(text)}</p>`;
 
 const laneShell = (id, name, stamp, body, more, open) =>

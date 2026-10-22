@@ -45,6 +45,14 @@ test("arrow keys move between tabs and wrap; Home and End jump; other keys do no
   assert.equal(tabFromKey("nope", "ArrowRight"), null);
 });
 
+test("tab keys ignore any held modifier, so Alt+Left still goes Back", () => {
+  for (const mod of ["altKey", "ctrlKey", "metaKey", "shiftKey"]) {
+    assert.equal(tabFromKey("models", "ArrowLeft", { [mod]: true }), null);
+    assert.equal(tabFromKey("models", "Home", { [mod]: true }), null);
+  }
+  assert.equal(tabFromKey("models", "ArrowLeft", { altKey: false }), "overview");
+});
+
 test("the dashboard page has four tabs with tab, tablist and tabpanel roles wired together", () => {
   const html = dashboardHtml();
   assert.match(html, /role="tablist"/);

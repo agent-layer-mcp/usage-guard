@@ -71,7 +71,7 @@ test("OpenRouter spend uses only the API key and fails soft", async () => {
   let seen;
   const spend = await readOpenRouterSpend({
     env: { OPENROUTER_API_KEY: "k" },
-    fetch: async (url, init) => { seen = [url, init.headers.Authorization]; return { ok: true, json: async () => ({ data: { usage_daily: 1.5 } }) }; },
+    fetch: async (url, init) => { seen ??= [url, init.headers.Authorization]; return { ok: true, json: async () => ({ data: { usage_daily: 1.5 } }) }; },
   });
   assert.deepEqual(seen, ["https://openrouter.ai/api/v1/key", "Bearer k"]);
   assert.equal(spend.spentTodayUsd, 1.5);
@@ -285,4 +285,18 @@ test("route previews record no decisions", (t) => {
   const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
   routeJob(store, "code", { now: NOW, payAsYouGo: hermes(0), record: false });
   assert.equal(store.recentDecisions(50).length, 0);
+});
+
+test("Hermes closes when OpenRouter credit is used up, before its daily cap", async (t) => {
+  const reply = (body) => ({ ok: true, json: async () => ({ data: body }) });
+  const spend = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
+    fetch: async (url) => reply(url.endsWith("/credits") ? { total_credits: 10, total_usage: 10.02 } : { usage_daily: 0.01, limit_remaining: null }) });
+  assert.equal(spend.outOfCredit, true);
+  const store = fixture(t, { claude: [55, 90], codex: [55, 90] });
+  const hermesLane = routeJob(store, "code", { now: NOW, payAsYouGo: spend, record: false }).lanes.find((l) => l.lane === "hermes");
+  assert.equal(hermesLane.available, false);
+  assert.match(hermesLane.reason, /credit is used up/);
+  const keyCapped = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
+    fetch: async (url) => (url.endsWith("/credits") ? { ok: false } : reply({ usage_daily: 0, limit_remaining: 0 })) });
+  assert.equal(keyCapped.outOfCredit, true);
 });

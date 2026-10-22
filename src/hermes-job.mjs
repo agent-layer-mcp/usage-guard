@@ -78,7 +78,8 @@ export function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, 
   const diffStat = git(worktree, ["diff", "--stat"], true).stdout.trim();
   const summary = {
     kind,
-    ok: !result.error && result.status === 0,
+    // Hermes can exit 0 after OpenRouter refuses the turn for lack of credit.
+    ok: !result.error && result.status === 0 && !/HTTP 402|credits exhausted/i.test(`${result.stdout}${result.stderr}`),
     exitCode: result.status ?? null,
     model: config.hermesModel,
     attempt: failedAttempts + 1,

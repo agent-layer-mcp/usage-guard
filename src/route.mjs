@@ -208,7 +208,7 @@ function hermesLane(config, spend) {
   const cap = config.payAsYouGoDailyCapUsd;
   const configured = Boolean(spend?.configured);
   const spentUsd = Number.isFinite(spend?.spentTodayUsd) ? spend.spentTodayUsd : null;
-  const available = configured && cap > 0 && spentUsd != null && spentUsd < cap;
+  const available = configured && cap > 0 && spentUsd != null && spentUsd < cap && !spend?.outOfCredit;
   return {
     lane: "hermes",
     subscription: false,
@@ -223,12 +223,15 @@ function hermesLane(config, spend) {
     dailyCapUsd: cap,
     remainingTodayUsd: spentUsd == null ? null : Math.max(0, cap - spentUsd),
     reason: !configured ? "No OpenRouter API key: set OPENROUTER_API_KEY or put it in ~/.usage-guard/openrouter.env."
+      : spend?.outOfCredit ? "OpenRouter credit is used up; add credit at openrouter.ai to use Hermes."
       : spentUsd == null ? "OpenRouter spend could not be read."
         : available ? "Under today's cap." : "Today's cap is spent.",
   };
 }
 
 // Reads today's spend for the key from OpenRouter's documented key endpoint.
+const MIN_CREDIT_USD = 1;
+
 export async function readOpenRouterSpend(options = {}) {
   const env = options.env || process.env;
   const key = env.OPENROUTER_API_KEY || readKeyFile(path.join(guardHome(env), "openrouter.env"));
@@ -242,7 +245,26 @@ export async function readOpenRouterSpend(options = {}) {
     const body = await response.json();
     // shortcut: OpenRouter's daily usage resets at UTC midnight, not the local day boundary.
     const spentTodayUsd = Number(body?.data?.usage_daily);
-    return { configured: true, spentTodayUsd: Number.isFinite(spentTodayUsd) ? spentTodayUsd : null };
+    // Out of money stops Hermes before its daily cap: the key's own limit, or the account's credit balance.
+    const keyLeft = body?.data?.limit_remaining;
+    let creditsLeft = null;
+    try {
+      const credits = await (options.fetch || fetch)("https://openrouter.ai/api/v1/credits", {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(options.timeoutMs ?? 4000),
+      });
+      const data = credits.ok ? (await credits.json())?.data : null;
+      if (Number.isFinite(data?.total_credits) && Number.isFinite(data?.total_usage)) creditsLeft = data.total_credits - data.total_usage;
+    } catch {
+      // The balance is optional; the daily spend above still applies.
+    }
+    return {
+      configured: true,
+      spentTodayUsd: Number.isFinite(spentTodayUsd) ? spentTodayUsd : null,
+      // OpenRouter refuses a request whose worst-case cost could overrun the balance, so keep a small floor.
+      outOfCredit: (Number.isFinite(keyLeft) && keyLeft < MIN_CREDIT_USD) || (creditsLeft != null && creditsLeft < MIN_CREDIT_USD),
+      creditLeftUsd: creditsLeft,
+    };
   } catch (error) {
     return { configured: true, error: error.message };
   }

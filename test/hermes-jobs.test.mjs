@@ -157,3 +157,20 @@ test("test output is cut to failing test names and short errors", () => {
   assert.deepEqual(unknown.tail, ["compiling", "boom: something broke"]);
   assert.equal(summarizeTestOutput("all good\n", 0).passed, true);
 });
+
+test("a Hermes job that OpenRouter refuses for lack of credit is reported as failed", (t) => {
+  const repo = fakeRepo(t);
+  const home = tempDir(t, "ug-home-");
+  const bin = path.join(home, "fake-hermes");
+  writeFileSync(bin, `#!/bin/sh\necho "Billing or credits exhausted: HTTP 402"\nexit 0\n`);
+  chmodSync(bin, 0o755);
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "Add a unit test for src/a.js\n");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const summary = runHermesJob(store, {
+    kind: "test-write", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: bin,
+    env: { ...process.env, USAGE_GUARD_HOME: home },
+  });
+  t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
+  assert.equal(summary.ok, false);
+});

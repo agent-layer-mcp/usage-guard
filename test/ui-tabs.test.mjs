@@ -67,6 +67,7 @@ test("the dashboard serves the shared panel files, and only those", async (t) =>
   }
   assert.equal((await fetch(`${dashboard.url}/ui/../dashboard.mjs`)).status, 404);
   assert.equal((await fetch(`${dashboard.url}/ui/nope.js`)).status, 404);
+  assert.equal((await fetch(`${dashboard.url}/ui/__proto__`)).status, 404);
 });
 
 test("the tray keeps byte-identical copies of the shared panel files", () => {

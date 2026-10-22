@@ -20,7 +20,7 @@ export function startDashboard(store, options = {}) {
     try {
       const url = new URL(request.url || "/", `http://${request.headers.host || `${host}:${port}`}`);
       if (request.method === "GET" && url.pathname === "/") return html(response, dashboardHtml());
-      if (request.method === "GET" && url.pathname.startsWith("/ui/") && UI_FILES[url.pathname.slice(4)]) return asset(response, url.pathname.slice(4));
+      if (request.method === "GET" && url.pathname.startsWith("/ui/") && Object.hasOwn(UI_FILES, url.pathname.slice(4))) return asset(response, url.pathname.slice(4));
       if (request.method === "GET" && url.pathname === "/api/status") return json(response, 200, completeStatus(store));
       if (request.method === "GET" && url.pathname === "/api/route") {
         // Previews for the tray are not logged; `usage-guard route` records real routing.

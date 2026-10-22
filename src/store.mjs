@@ -275,6 +275,10 @@ export class GuardStore {
       .map(mapObservation);
   }
 
+  pruneDecisions(now = Date.now(), maxAgeMs = 14 * 24 * 60 * 60_000) {
+    this.database.prepare("DELETE FROM decisions WHERE created_at < ?").run(now - maxAgeMs);
+  }
+
   recordDecision(decision) {
     const insert = this.database.prepare(`
       INSERT INTO decisions (

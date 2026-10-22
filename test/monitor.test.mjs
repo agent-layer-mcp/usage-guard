@@ -207,3 +207,17 @@ test("desktop notifier calls time out after 5 seconds", () => {
   });
   assert.deepEqual(seen.map((o) => o.timeout), [5000, 5000]);
 });
+
+test("a monitor cycle prunes decisions older than 14 days and keeps recent ones", async () => {
+  const store = new GuardStore({ filename: ":memory:" });
+  const now = Date.UTC(2026, 9, 22, 0, 0);
+  const day = 24 * 60 * 60_000;
+  const decision = (createdAt) => ({ provider: "claude", state: "safe", action: "continue", reason: "r", taskClass: "any", createdAt });
+  store.recordDecision(decision(now - 15 * day));
+  store.recordDecision(decision(now - 13 * day));
+  await runMonitorCycle(store, { providers: ["claude"], now, claudeDesktop: { platform: "none" }, notifier() {} });
+  const times = store.database.prepare("SELECT created_at FROM decisions").all().map((r) => r.created_at);
+  assert.ok(!times.includes(now - 15 * day));
+  assert.ok(times.includes(now - 13 * day));
+  store.close();
+});

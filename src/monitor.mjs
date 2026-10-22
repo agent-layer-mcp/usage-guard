@@ -39,6 +39,7 @@ export async function runMonitorCycle(store, options = {}) {
   const providers = options.providers || ["claude"];
   const notifier = options.notifier || notifyDesktop;
   const results = [];
+  store.pruneDecisions(options.now ?? Date.now());
 
   for (const provider of providers) {
     try {

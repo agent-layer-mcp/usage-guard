@@ -173,3 +173,14 @@ test("an old fallback reading is labelled, not shown as current", async (t) => {
   await runSetup({ ...d, ui });
   assert.match(ui.shown.find(([, title]) => title === "Usage now")[2], /Claude: no live reading yet \(last known, 5h old: weekly 66%\)/);
 });
+
+test("Linux reads the Claude login from the keyring when the file has none", () => {
+  const calls = [];
+  const login = JSON.stringify({ claudeAiOauth: { accessToken: "k", expiresAt: 5 } });
+  const runner = (command, args) => { calls.push([command, ...args]); return login; };
+  const homeDir = "/nonexistent-usage-guard-test";
+  assert.equal(readClaudeCodeToken({ platform: "linux", homeDir, env: {}, now: 1, commandRunner: runner }), "k");
+  assert.deepEqual(calls[0], ["secret-tool", "lookup", "service", "Claude Code-credentials"]);
+  assert.equal(readClaudeCodeToken({ platform: "linux", homeDir, env: {}, now: 9, commandRunner: runner }), null); // expired
+  assert.equal(readClaudeCodeToken({ platform: "linux", homeDir, env: {}, commandRunner: () => { throw new Error("no keyring"); } }), null);
+});

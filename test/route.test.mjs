@@ -271,6 +271,17 @@ test("planning skips a stale Claude lane when Codex has a fresh reading", (t) =>
   assert.equal(routeJob(store, "plan", { now: later, payAsYouGo: hermes(0), record: false }).lane, "codex");
 });
 
+test("planning and review say plainly when a stale Claude reading sends them to Codex", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  const later = NOW + HOUR;
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: RESET }] });
+  const plan = routeJob(store, "plan", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.match(plan.reason, /^Claude has no fresh reading, so planning goes to Codex\./);
+  const review = routeJob(store, "review", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.match(review.reason, /^Claude has no fresh reading, so review goes to Codex\./);
+});
+
 test("a lane with no daily share ranks after one with a daily share", (t) => {
   const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
   // Codex loses its reset time, so it reports weekly % (a different unit) instead of today's points.

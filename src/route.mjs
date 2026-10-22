@@ -85,6 +85,9 @@ export function routeJob(store, kind, options = {}) {
       if (passedOver && choice === best) {
         reason = `Preferred the lane on pace: ${laneName(passedOver.lane)} is over pace (${passedOver.paceRatio.toFixed(1)}x), so ${laneName(best.lane)} takes it with ${best.remainingTodayPercent.toFixed(1)} pts left today.`;
       }
+      if ((kind === "plan" || kind === "review") && claude && !claude.verified && choice?.lane === "codex") {
+        reason = `Claude has no fresh reading, so ${kind === "plan" ? "planning" : "review"} goes to Codex. ${reason}`;
+      }
       if (gate && !gate.ok && choice) reason = `${gate.reason} ${reason}`;
       if (codexFirst) reason = `${codexFirst.reason} ${reason}`;
     }

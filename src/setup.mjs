@@ -5,6 +5,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export const SETUP_INTERVAL_MINUTES = 10;
+// The timer ticks more often than readings are taken, so a spent lane can be re-read every 2 minutes.
+export const MONITOR_TICK_MINUTES = 2;
 export const TOOLS = Object.freeze(["claude", "codex", "hermes"]);
 const NAMES = { claude: "Claude", codex: "Codex", hermes: "Hermes (OpenRouter)" };
 
@@ -90,13 +92,14 @@ export async function runSetup(deps) {
 
   // 3. Per-tool checks and consent.
   const notes = [];
+  let allowed = true;
   if (tools.includes("claude")) {
-    const allowed = options.yes || await ask(ui.confirm({
+    allowed = options.yes || await ask(ui.confirm({
       message: "Read Claude usage with your Claude Code login? It is read at each check, sent only to api.anthropic.com, and never stored.",
       initialValue: true,
     }));
     if (!allowed) notes.push("Claude: reads usage only when a session reports it (login not used).");
-    else if (!deps.claudeLoginFound()) {
+    else if (!(await deps.claudeLoginFound())) {
       ui.log.warn("No Claude Code login found. Run `claude` in a terminal and sign in with /login; Usage Guard picks it up on the next check.");
     }
   }
@@ -123,15 +126,15 @@ export async function runSetup(deps) {
   const spin = ui.spinner();
   spin.start("Setting up the background check");
   // Readings arrive every 10 minutes, so allow one missed check before a lane counts as stale.
-  deps.store.setConfig({ trackedProviders: tools, staleAfterMinutes: SETUP_INTERVAL_MINUTES * 2 + 5 });
+  deps.store.setConfig({ trackedProviders: tools, ...(tools.includes("claude") ? { claudeLoginAllowed: Boolean(allowed) } : {}), staleAfterMinutes: SETUP_INTERVAL_MINUTES * 2 + 5 });
   const record = deps.install({
     integrations: integrate,
     claude: tools.includes("claude"),
     codex: tools.includes("codex"),
-    monitorIntervalMinutes: SETUP_INTERVAL_MINUTES,
+    monitorIntervalMinutes: MONITOR_TICK_MINUTES,
   });
   spin.stop(record.monitor?.enabled
-    ? `Background check runs every ${SETUP_INTERVAL_MINUTES} minutes`
+    ? `Background check runs every ${SETUP_INTERVAL_MINUTES} minutes (every ${MONITOR_TICK_MINUTES} while a share is spent)`
     : "No background check on this system: readings come only from sessions");
 
   // 5. First reading, so the user sees it work.

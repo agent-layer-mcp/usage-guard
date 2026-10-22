@@ -41,12 +41,12 @@ fn request(method: &str, path: &str, body: Option<&str>) -> Result<String, Strin
     Ok(payload)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn guard_status() -> Result<String, String> {
     request("GET", "/api/status", None)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn guard_route(kind: String) -> Result<String, String> {
     if !["code", "review", "plan", "bulk"].contains(&kind.as_str()) {
         return Err("Unknown route kind".into());
@@ -54,13 +54,13 @@ fn guard_route(kind: String) -> Result<String, String> {
     request("GET", &format!("/api/route?kind={kind}"), None)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn guard_models(refresh: bool) -> Result<String, String> {
     request("GET", if refresh { "/api/models?refresh=1" } else { "/api/models" }, None)
 }
 
 // Only the settings the panel edits may be changed from here.
-#[tauri::command]
+#[tauri::command(async)]
 fn set_config(patch: serde_json::Map<String, serde_json::Value>) -> Result<String, String> {
     const ALLOWED: [&str; 4] = ["routingPaused", "hermesModel", "payAsYouGoDailyCapUsd", "planPreset"];
     if patch.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
@@ -97,17 +97,24 @@ fn run_switch(enabled: bool) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_enabled(enabled: bool) -> Result<String, String> {
     run_switch(enabled)
 }
 
+// Runs on its own thread: the API call and the CLI can both block for seconds.
 fn toggle_enabled(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || toggle_enabled_blocking(&app));
+}
+
+fn toggle_enabled_blocking(app: &AppHandle) {
     let enabled = request("GET", "/api/status", None)
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .map(|status| status["config"]["enabled"].as_bool() != Some(false))
-        .unwrap_or(true);
+        // API down means the state is unknown: turn the guard on.
+        .unwrap_or(false);
     let _ = run_switch(!enabled);
     if let Some(window) = app.get_webview_window("panel") {
         let _ = window.eval("refresh()");
@@ -123,7 +130,7 @@ fn set_tray_label(app: AppHandle, label: String) {
 }
 
 // Opens the Codex usage page so the user can choose to spend a banked reset there.
-#[tauri::command]
+#[tauri::command(async)]
 fn open_codex_usage() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let mut command = std::process::Command::new("xdg-open");

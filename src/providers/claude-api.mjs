@@ -1,12 +1,17 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 // The plan-usage endpoint Claude Code's own usage screen reads, signed in with its
 // OAuth login. The token is read per call, sent only to this URL, and never kept.
 export const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const TIMEOUT_MS = 15_000;
+// A keyring or keychain lookup that takes longer than this is treated as "no login here".
+const LOGIN_READ_MS = 2000;
 
 export function claudeCredentialsPath(options = {}) {
   const env = options.env ?? process.env;
@@ -21,19 +26,23 @@ export function claudeLoginSources(options = {}) {
   return platform === "darwin" ? ["keychain"] : platform === "linux" ? ["file", "keyring"] : ["file"];
 }
 
-function readClaudeLogin(source, options) {
-  const run = options.commandRunner ?? ((command, args) => execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }));
+// execFile treats a timeout of 0 as none, so a spent budget still gets 1 ms.
+export const loginReadTimeout = (budgetMs) => Math.max(1, Math.min(LOGIN_READ_MS, budgetMs ?? Infinity));
+
+async function readClaudeLogin(source, options) {
+  const timeout = loginReadTimeout(options.budgetMs);
+  const run = options.commandRunner ?? (async (command, args) => (await execFileAsync(command, args, { encoding: "utf8", timeout })).stdout);
   if (source === "keychain") return run("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"]);
   if (source === "keyring") return run("secret-tool", ["lookup", "service", "Claude Code-credentials"]);
   return readFileSync(options.credentialsPath ?? claudeCredentialsPath(options), "utf8");
 }
 
 // Claude Code's login, or null when it is missing or expired. No other credential is tried.
-export function readClaudeCodeToken(options = {}) {
+export async function readClaudeCodeToken(options = {}) {
   const now = options.now ?? Date.now();
   for (const source of claudeLoginSources(options)) {
     try {
-      const oauth = JSON.parse(readClaudeLogin(source, options))?.claudeAiOauth;
+      const oauth = JSON.parse(await readClaudeLogin(source, options))?.claudeAiOauth;
       if (typeof oauth?.accessToken !== "string" || !oauth.accessToken) continue;
       if (Number.isFinite(oauth.expiresAt) && oauth.expiresAt <= now) continue;
       return oauth.accessToken;
@@ -56,13 +65,18 @@ export function parseClaudeUsage(payload, now = Date.now()) {
 }
 
 // One reading, or null when there is no login or the call fails (the lane then goes stale).
+// options.budgetMs caps the whole call (login read plus request), for hooks that have a deadline.
 export async function fetchClaudeUsage(options = {}) {
-  const token = readClaudeCodeToken(options);
+  const started = Date.now();
+  const token = await readClaudeCodeToken(options);
   if (!token) return null;
+  const remainingMs = (options.budgetMs ?? Infinity) - (Date.now() - started);
+  if (remainingMs < 500) return null;
   try {
     const response = await (options.fetch ?? fetch)(CLAUDE_USAGE_URL, {
       headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
-      signal: AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS),
+      redirect: "error", // never let the token follow a redirect
+      signal: AbortSignal.timeout(Math.min(options.timeoutMs ?? TIMEOUT_MS, remainingMs)),
     });
     if (!response.ok) return null;
     const snapshot = parseClaudeUsage(await response.json(), options.now ?? Date.now());

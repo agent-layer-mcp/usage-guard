@@ -137,7 +137,7 @@ export function buildProviderDecision(store, provider, options = {}) {
       contextInstructions(context, config),
     ),
   };
-  store.recordDecision(decision);
+  if (options.record !== false) store.recordDecision(decision);
   return applyModelStepping(store, decision, config, options);
 }
 

@@ -71,7 +71,7 @@ test("OpenRouter spend uses only the API key and fails soft", async () => {
   let seen;
   const spend = await readOpenRouterSpend({
     env: { OPENROUTER_API_KEY: "k" },
-    fetch: async (url, init) => { seen = [url, init.headers.Authorization]; return { ok: true, json: async () => ({ data: { usage_daily: 1.5 } }) }; },
+    fetch: async (url, init) => { seen ??= [url, init.headers.Authorization]; return { ok: true, json: async () => ({ data: { usage_daily: 1.5 } }) }; },
   });
   assert.deepEqual(seen, ["https://openrouter.ai/api/v1/key", "Bearer k"]);
   assert.equal(spend.spentTodayUsd, 1.5);
@@ -253,4 +253,66 @@ test("stale Claude and spent Codex: code never goes to Codex, routine work goes 
   const bulk = routeJob(store, "bulk", { now: later, payAsYouGo: hermes(0), record: false });
   assert.equal(bulk.lane, "hermes");
   assert.match(bulk.reason, /Claude has no fresh reading, so routine work goes to Hermes/);
+});
+
+test("a Hermes job with no lane open waits instead of crashing", (t) => {
+  // Both subscriptions spent; Hermes at its cap.
+  const store = fixture(t, { claude: [55, 90], codex: [55, 90], config: { hermesRepos: [process.cwd()] } });
+  const route = routeJob(store, "lint-format", { now: NOW, payAsYouGo: hermes(5), repo: process.cwd(), record: false });
+  assert.equal(route.lane, "wait");
+  assert.match(route.reason, /No lane has budget/);
+});
+
+test("planning skips a stale Claude lane when Codex has a fresh reading", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  const later = NOW + HOUR;
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: RESET }] });
+  assert.equal(routeJob(store, "plan", { now: later, payAsYouGo: hermes(0), record: false }).lane, "codex");
+});
+
+test("planning and review say plainly when a stale Claude reading sends them to Codex", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  const later = NOW + HOUR;
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: RESET }] });
+  const plan = routeJob(store, "plan", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.match(plan.reason, /^Claude has no fresh reading, so planning goes to Codex\./);
+  const review = routeJob(store, "review", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.match(review.reason, /^Claude has no fresh reading, so review goes to Codex\./);
+});
+
+test("a lane with no daily share ranks after one with a daily share", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  // Codex loses its reset time, so it reports weekly % (a different unit) instead of today's points.
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: NOW + 60_000,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: null }] });
+  const route = routeJob(store, "code", { now: NOW + 60_000, payAsYouGo: hermes(0), record: false });
+  assert.equal(route.lanes.find((l) => l.lane === "codex").hasDailyShare, false);
+  assert.equal(route.lane, "claude");
+});
+
+test("route previews record no decisions", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  routeJob(store, "code", { now: NOW, payAsYouGo: hermes(0), record: false });
+  assert.equal(store.recentDecisions(50).length, 0);
+});
+
+test("Hermes closes when OpenRouter credit is used up, before its daily cap", async (t) => {
+  const reply = (body) => ({ ok: true, json: async () => ({ data: body }) });
+  const spend = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
+    fetch: async (url) => reply(url.endsWith("/credits") ? { total_credits: 10, total_usage: 10.02 } : { usage_daily: 0.01, limit_remaining: null }) });
+  assert.equal(spend.outOfCredit, true);
+  // An ordinary inference key gets 403 from /credits: the balance is unknown, not zero.
+  const unknown = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
+    fetch: async (url) => (url.endsWith("/credits") ? { ok: false, status: 403 } : reply({ usage_daily: 0.01, limit_remaining: 5 })) });
+  assert.equal(unknown.outOfCredit, false);
+  assert.equal(unknown.creditLeftUsd, null);
+  const store = fixture(t, { claude: [55, 90], codex: [55, 90] });
+  const hermesLane = routeJob(store, "code", { now: NOW, payAsYouGo: spend, record: false }).lanes.find((l) => l.lane === "hermes");
+  assert.equal(hermesLane.available, false);
+  assert.match(hermesLane.reason, /credit is used up/);
+  const keyCapped = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
+    fetch: async (url) => (url.endsWith("/credits") ? { ok: false } : reply({ usage_daily: 0, limit_remaining: 0 })) });
+  assert.equal(keyCapped.outOfCredit, true);
 });

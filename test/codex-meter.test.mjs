@@ -91,3 +91,12 @@ test("a null usage percentage is not treated as zero", () => {
   });
   assert.deepEqual(snapshot.windows.map((window) => window.key), ["codex:secondary"]);
 });
+
+test("a Codex executable that exits immediately rejects instead of raising EPIPE", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "usage-guard-codex-exit-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const executable = path.join(directory, "exits-now.sh");
+  writeFileSync(executable, "#!/bin/sh\nexit 3\n", { mode: 0o700 });
+  await assert.rejects(readCodexRateLimits({ codexPath: executable, env: { PATH: process.env.PATH }, timeoutMs: 5000 }));
+  await assert.rejects(readCodexRateLimits({ codexPath: path.join(directory, "missing"), env: {}, timeoutMs: 5000 }));
+});

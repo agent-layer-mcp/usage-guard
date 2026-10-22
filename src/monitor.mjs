@@ -20,15 +20,32 @@ const STATE_ORDER = Object.freeze({
   queue: 4,
 });
 
+const POLL_MS = 10 * 60_000;
+const SPENT_POLL_MS = 2 * 60_000;
+const TIMER_SLACK_MS = 30_000;
+
+// The timer ticks every 2 minutes. A lane whose daily share is spent is read on every tick,
+// so a provider's mid-day reset shows within minutes; other lanes are read every 10.
+export function pollDue(store, provider, now = Date.now()) {
+  const last = store.getNoticeState(provider, "monitor-poll");
+  const spent = providerDecision(store, provider, { now, record: false }).daily?.spent;
+  if (last && now - last.updatedAt < (spent ? SPENT_POLL_MS : POLL_MS) - TIMER_SLACK_MS) return false;
+  store.setNoticeState(provider, "monitor-poll", "polled", now);
+  return true;
+}
+
 export async function runMonitorCycle(store, options = {}) {
   if (store.getConfig().enabled === false) return [];
   const providers = options.providers || ["claude"];
   const notifier = options.notifier || notifyDesktop;
   const results = [];
+  store.pruneDecisions(options.now ?? Date.now());
 
   for (const provider of providers) {
     try {
-      if (provider === "claude") await syncClaude(store, options);
+      if (!pollDue(store, provider, options.now ?? Date.now())) {
+        // Not due yet: keep the last reading.
+      } else if (provider === "claude") await syncClaude(store, options);
       else if (provider === "codex") await syncCodex(store, options.codex);
     } catch {
       // Missing or changed provider signals remain visible as stale/missing state.
@@ -92,7 +109,7 @@ export function notifyLinux(notification, options = {}) {
       `--urgency=${urgency}`,
       `${notification.title}: ${notification.subtitle}`,
       notification.message,
-    ], { encoding: "utf8", stdio: "ignore" });
+    ], { encoding: "utf8", stdio: "ignore", timeout: 5000 });
     return true;
   } catch {
     return false; // No notify-send or no session bus: the state stays visible in status.
@@ -116,6 +133,7 @@ export function notifyMacOS(notification, options = {}) {
     run(nativeNotifier, args, {
       encoding: "utf8",
       stdio: "ignore",
+      timeout: 5000,
     });
     return true;
   }
@@ -136,6 +154,7 @@ export function notifyMacOS(notification, options = {}) {
     run(terminalNotifier, args, {
       encoding: "utf8",
       stdio: "ignore",
+      timeout: 5000,
     });
     return true;
   }
@@ -149,6 +168,7 @@ export function notifyMacOS(notification, options = {}) {
   run("/usr/bin/osascript", ["-e", script], {
     encoding: "utf8",
     stdio: "ignore",
+    timeout: 5000,
   });
   return true;
 }

@@ -1,6 +1,8 @@
 // Tray host for the shared panel (panel.js). All data comes through the app's own Rust commands.
 import { mountPanel, shellHtml } from "./panel.js";
-import { NAMES } from "./render.js";
+
+// Claude and Codex both start with C, so the label uses two-letter names.
+const SHORT = { claude: "Cl", codex: "Cx" };
 
 const { invoke } = window.__TAURI__.core;
 const call = async (command, args) => JSON.parse(await invoke(command, args));
@@ -9,7 +11,7 @@ function trayLabel(status, route) {
   const parts = status.providers.map((p) => {
     const d = p.daily;
     const share = d && d.todayBudgetPercent > 0 ? `${Math.round((d.usedTodayPercent / d.todayBudgetPercent) * 100)}%` : "–";
-    return `${NAMES[p.provider][0]} ${share}`;
+    return `${SHORT[p.provider] ?? p.provider.slice(0, 2)} ${share}`;
   });
   const hermes = route.lanes.find((l) => l.lane === "hermes");
   if (hermes?.spentTodayUsd != null) parts.push(`H $${hermes.spentTodayUsd.toFixed(2)}`);

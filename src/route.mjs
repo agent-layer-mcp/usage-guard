@@ -26,9 +26,11 @@ export function routeJob(store, kind, options = {}) {
   }
   const role = { review: "review", plan: "planning" }[kind] || (ROUTINE_KINDS.has(kind) ? "routine" : "standard");
   const lanes = SUBSCRIPTION_LANES.map((provider) => subscriptionLane(
-    buildProviderDecision(store, provider, { now, config, role }), kind,
+    buildProviderDecision(store, provider, { now, config, role, record: options.record }), kind,
   ));
-  lanes.push(hermesLane(config, options.payAsYouGo));
+  // A Hermes job that failed with HTTP 402 closes the lane for the rest of the (local) day.
+  const creditClosed = store.getNoticeState("hermes", "credit-closed")?.state === localDay(now);
+  lanes.push(hermesLane(config, creditClosed ? { ...options.payAsYouGo, outOfCredit: true } : options.payAsYouGo));
 
   let choice = null;
   let reason;
@@ -41,14 +43,16 @@ export function routeJob(store, kind, options = {}) {
     if (codexFirst?.applies) {
       choice = lanes.find((lane) => lane.lane === "codex");
       reason = codexFirst.reason;
-    } else if ((kind === "plan" || kind === "review") && claude) {
+    } else if ((kind === "plan" || kind === "review") && claude?.verified) {
       choice = claude;
       reason = `${kind === "plan" ? "Planning" : "Review"} stays on Claude while its daily share allows.`;
     } else {
       // Third-party lanes never take planning or review, and only take work once both subscriptions are spent.
       const subscriptions = open.filter((lane) => lane.subscription);
       // Both have share: the lane on pace goes first, so an over-pace lane cools off.
+      // A lane with no daily share reports weekly %, a different unit, so it ranks after lanes with one.
       const best = subscriptions.sort((a, b) => (b.verified - a.verified)
+        || (b.hasDailyShare - a.hasDailyShare)
         || (a.overPace - b.overPace)
         || b.remainingTodayPercent - a.remainingTodayPercent)[0] || null;
       const passedOver = subscriptions.find((lane) => lane !== best && lane.overPace && best && !best.overPace
@@ -64,7 +68,7 @@ export function routeJob(store, kind, options = {}) {
       // Routine work skips a lane with no fresh reading when the capped pay-as-you-go lane is open.
       const staleRoutine = best && !best.verified && ROUTINE_KINDS.has(kind);
       choice = (gate?.ok && payAsYouGo) || ((nearlyOut || staleRoutine) && payAsYouGo) || best || payAsYouGo;
-      reason = gate?.ok && choice === payAsYouGo
+      reason = gate?.ok && choice && choice === payAsYouGo
         ? `${kind} goes to ${laneName(choice.lane)} first while it is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
         : !choice ? `No lane has budget for ${kind} work now.${nextShareText(lanes)}`
         : choice.subscription
@@ -80,6 +84,9 @@ export function routeJob(store, kind, options = {}) {
             : `Both subscription lanes have spent today's share; ${laneName(choice.lane)} is under its $${config.payAsYouGoDailyCapUsd} daily cap.`;
       if (passedOver && choice === best) {
         reason = `Preferred the lane on pace: ${laneName(passedOver.lane)} is over pace (${passedOver.paceRatio.toFixed(1)}x), so ${laneName(best.lane)} takes it with ${best.remainingTodayPercent.toFixed(1)} pts left today.`;
+      }
+      if ((kind === "plan" || kind === "review") && claude && !claude.verified && choice?.lane === "codex") {
+        reason = `Claude has no fresh reading, so ${kind === "plan" ? "planning" : "review"} goes to Codex. ${reason}`;
       }
       if (gate && !gate.ok && choice) reason = `${gate.reason} ${reason}`;
       if (codexFirst) reason = `${codexFirst.reason} ${reason}`;
@@ -202,11 +209,13 @@ function laneReason(decision, { blocked, spent, verified }) {
   return ["watch", "protect"].includes(decision.state) && !decision.dailyShareOnly ? `${left} ${decision.reason}` : left;
 }
 
+export const localDay = (ms) => new Date(ms).toLocaleDateString("en-CA");
+
 function hermesLane(config, spend) {
   const cap = config.payAsYouGoDailyCapUsd;
   const configured = Boolean(spend?.configured);
   const spentUsd = Number.isFinite(spend?.spentTodayUsd) ? spend.spentTodayUsd : null;
-  const available = configured && cap > 0 && spentUsd != null && spentUsd < cap;
+  const available = configured && cap > 0 && spentUsd != null && spentUsd < cap && !spend?.outOfCredit;
   return {
     lane: "hermes",
     subscription: false,
@@ -217,16 +226,20 @@ function hermesLane(config, spend) {
     // The dstest Hermes profile pins OpenRouter hosts and denies data collection; keep jobs on it.
     command: `hermes -p dstest --provider openrouter -m ${config.hermesModel} -z "<task>"`,
     workdir: "Run it from a scratch directory or a git worktree, never from a folder holding .env files or user data.",
+    outOfCredit: Boolean(spend?.outOfCredit),
     spentTodayUsd: spentUsd,
     dailyCapUsd: cap,
     remainingTodayUsd: spentUsd == null ? null : Math.max(0, cap - spentUsd),
     reason: !configured ? "No OpenRouter API key: set OPENROUTER_API_KEY or put it in ~/.usage-guard/openrouter.env."
+      : spend?.outOfCredit ? "OpenRouter credit is used up; add credit at openrouter.ai to use Hermes."
       : spentUsd == null ? "OpenRouter spend could not be read."
         : available ? "Under today's cap." : "Today's cap is spent.",
   };
 }
 
 // Reads today's spend for the key from OpenRouter's documented key endpoint.
+const MIN_CREDIT_USD = 1;
+
 export async function readOpenRouterSpend(options = {}) {
   const env = options.env || process.env;
   const key = env.OPENROUTER_API_KEY || readKeyFile(path.join(guardHome(env), "openrouter.env"));
@@ -240,7 +253,27 @@ export async function readOpenRouterSpend(options = {}) {
     const body = await response.json();
     // shortcut: OpenRouter's daily usage resets at UTC midnight, not the local day boundary.
     const spentTodayUsd = Number(body?.data?.usage_daily);
-    return { configured: true, spentTodayUsd: Number.isFinite(spentTodayUsd) ? spentTodayUsd : null };
+    // Out of money stops Hermes before its daily cap: the key's own limit, or the account's credit balance.
+    const keyLeft = body?.data?.limit_remaining;
+    let creditsLeft = null;
+    try {
+      const credits = await (options.fetch || fetch)("https://openrouter.ai/api/v1/credits", {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(options.timeoutMs ?? 4000),
+      });
+      // /credits needs a management key; an ordinary inference key gets 403, so the balance stays unknown (null).
+      const data = credits.ok ? (await credits.json())?.data : null;
+      if (Number.isFinite(data?.total_credits) && Number.isFinite(data?.total_usage)) creditsLeft = data.total_credits - data.total_usage;
+    } catch {
+      // The balance is optional; the daily spend above still applies.
+    }
+    return {
+      configured: true,
+      spentTodayUsd: Number.isFinite(spentTodayUsd) ? spentTodayUsd : null,
+      // OpenRouter refuses a request whose worst-case cost could overrun the balance, so keep a small floor.
+      outOfCredit: (Number.isFinite(keyLeft) && keyLeft < MIN_CREDIT_USD) || (creditsLeft != null && creditsLeft < MIN_CREDIT_USD),
+      creditLeftUsd: creditsLeft,
+    };
   } catch (error) {
     return { configured: true, error: error.message };
   }

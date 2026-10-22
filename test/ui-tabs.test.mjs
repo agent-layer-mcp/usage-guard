@@ -45,6 +45,14 @@ test("arrow keys move between tabs and wrap; Home and End jump; other keys do no
   assert.equal(tabFromKey("nope", "ArrowRight"), null);
 });
 
+test("tab keys ignore any held modifier, so Alt+Left still goes Back", () => {
+  for (const mod of ["altKey", "ctrlKey", "metaKey", "shiftKey"]) {
+    assert.equal(tabFromKey("models", "ArrowLeft", { [mod]: true }), null);
+    assert.equal(tabFromKey("models", "Home", { [mod]: true }), null);
+  }
+  assert.equal(tabFromKey("models", "ArrowLeft", { altKey: false }), "overview");
+});
+
 test("the dashboard page has four tabs with tab, tablist and tabpanel roles wired together", () => {
   const html = dashboardHtml();
   assert.match(html, /role="tablist"/);
@@ -87,4 +95,50 @@ test("route, ladders and decisions render escaped text", () => {
   const rows = decisionsHtml([{ createdAt: 0, provider: "codex", action: "<b>x</b>", reason: "a & b" }, { createdAt: 0, provider: "claude", action: "y", reason: "z" }], 1);
   assert.match(rows, /&lt;b&gt;x&lt;\/b&gt;.*a &amp; b/);
   assert.equal((rows.match(/<li>/g) || []).length, 1);
+});
+
+test("back-to-back identical decisions collapse into one line with a count", () => {
+  const same = { createdAt: 0, provider: "claude", action: "observe", reason: "fine" };
+  const html = decisionsHtml([same, same, same, { ...same, provider: "codex" }, same]);
+  assert.equal((html.match(/<li>/g) || []).length, 3);
+  assert.match(html, /observe <small>×3<\/small>/);
+});
+
+test("the dashboard API refuses other hosts and cross-site changes", async (t) => {
+  const store = new GuardStore({ filename: ":memory:" });
+  const dashboard = await startDashboard(store, { port: 40_000 + Math.floor(Math.random() * 20_000) });
+  t.after(() => { dashboard.server.close(); store.close(); });
+  const http = await import("node:http");
+  const send = (method, headers, body) => new Promise((resolve, reject) => {
+    const request = http.request(`${dashboard.url}/api/config`, { method, headers }, (response) => { response.resume(); resolve(response.statusCode); });
+    request.on("error", reject);
+    request.end(body);
+  });
+  const patch = JSON.stringify({ routingPaused: true });
+  assert.equal(await send("GET", { host: "attacker.example:4765" }), 403); // DNS rebinding
+  assert.equal(await send("PATCH", { "content-type": "application/json", origin: "https://attacker.example" }, patch), 403);
+  assert.equal(await send("PATCH", { "content-type": "application/json", origin: "http://localhost:1" }, patch), 403); // another local port
+  assert.equal(store.getConfig().routingPaused, false);
+  assert.equal(await send("PATCH", { "content-type": "application/json", origin: dashboard.url }, patch), 200);
+  assert.equal(await send("PATCH", { "content-type": "application/json" }, JSON.stringify({ routingPaused: false })), 200); // the tray sends no Origin
+});
+
+test("a failed model-list load does not stick over later refreshes", async () => {
+  const { mountPanel } = await import("../src/ui/panel.js");
+  const els = new Map();
+  const el = (id) => {
+    if (!els.has(id)) els.set(id, { id, dataset: {}, style: {}, classList: { toggle() {} }, value: "", hidden: false, textContent: "", innerHTML: "",
+      addEventListener() {}, click() {}, querySelector: () => null, querySelectorAll: () => [], matches: () => false });
+    return els.get(id);
+  };
+  const root = { getElementById: el, querySelectorAll: () => [], querySelector: () => ({ addEventListener() {} }), body: { classList: { toggle() {} } }, activeElement: null, defaultView: {} };
+  const status = { config: { hermesModel: "m", modelLadders: {}, payAsYouGoDailyCapUsd: 1 }, providers: [], recentDecisions: [] };
+  const api = { status: async () => status, route: async () => ({ lanes: [], lane: "claude", reason: "" }), models: async () => { throw new Error("models down"); } };
+  const realInterval = globalThis.setInterval;
+  globalThis.setInterval = () => 0; // mountPanel starts a poll timer that would keep the test process alive
+  const panel = mountPanel({ api, root, storage: memoryStorage() });
+  globalThis.setInterval = realInterval;
+  await new Promise((r) => setTimeout(r, 20));
+  await panel.refresh();
+  assert.equal(el("error").hidden, true, "later successful refresh clears the model error");
 });

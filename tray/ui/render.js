@@ -24,7 +24,7 @@ export function baselineNote(d) {
 
 export const pill = ({ tone, text }) => `<span class="stamp ${tone}">${esc(text)}</span>`;
 const metric = (label, barHtml, figure) =>
-  `<div class="metric"><span class="m-label">${esc(label)}</span>${barHtml}<span class="m-figure">${esc(figure)}</span></div>`;
+  `<div class="metric"><span class="m-label" title="${esc(label)}">${esc(label)}</span>${barHtml}<span class="m-figure">${esc(figure)}</span></div>`;
 const detail = (label, text) => `<p class="detail"><b>${label}</b>${esc(text)}</p>`;
 
 const laneShell = (id, name, stamp, body, more, open) =>
@@ -74,8 +74,17 @@ export function routeTitle(route) {
 export const ladderHtml = (ladders = {}) => Object.entries(ladders).map(([lane, rungs]) =>
   `<div class="ladder lane-${esc(lane)}"><span class="lane-name"><i class="lane-dot"></i>${esc(NAMES[lane] || lane)}</span><ol class="rungs">${rungs.map((r) => `<li>${esc(r.model)} <small>${esc(r.effort)}</small></li>`).join("")}</ol></div>`).join("");
 
-export const decisionsHtml = (decisions = [], limit = 6) => decisions.slice(0, limit).map((d) =>
-  `<li><span class="when">${clock(d.createdAt)}</span><span class="who lane-${esc(d.provider)}"><i class="lane-dot"></i>${esc(d.provider)}</span><span class="act">${esc(d.action)}</span><span class="why">${esc(d.reason)}</span></li>`).join("");
+// Back-to-back identical decisions collapse into one line with a count, so repeats don't crowd out the rest.
+export function decisionsHtml(decisions = [], limit = 6) {
+  const runs = [];
+  for (const d of decisions) {
+    const last = runs.at(-1);
+    if (last && last.provider === d.provider && last.action === d.action && last.reason === d.reason) last.count += 1;
+    else runs.push({ ...d, count: 1 });
+  }
+  return runs.slice(0, limit).map((d) =>
+    `<li><span class="when">${clock(d.createdAt)}</span><span class="who lane-${esc(d.provider)}"><i class="lane-dot"></i>${esc(d.provider)}</span><span class="act">${esc(d.action)}${d.count > 1 ? ` <small>×${d.count}</small>` : ""}</span><span class="why">${esc(d.reason)}</span></li>`).join("");
+}
 
 const money = (value) => (value == null ? "?" : `$${value}`);
 export const modelOptionsHtml = (models, query = "") => {
@@ -93,4 +102,4 @@ export function recommendationsHtml(providers) {
     + `<p class="caption">${esc(p.modelReason)}</p></div>`).join("");
 }
 
-export const PRIVACY = ["No prompt storage", "No source-code storage", "No credential access", "No telemetry"];
+export const PRIVACY = ["No prompt storage", "No source-code storage", "No credential storage", "No telemetry"];

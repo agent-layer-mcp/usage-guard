@@ -77,6 +77,7 @@ function readCodexMeter(options = {}, { includeConfig = true } = {}) {
       stderr += chunk.toString();
     });
     child.on("error", (error) => finish(error));
+    child.stdin.on("error", (error) => finish(error)); // EPIPE when the child is missing or exits early
     child.on("exit", (code) => {
       if (settled) return;
       if (rateLimits) finish(null, { rateLimits, config });

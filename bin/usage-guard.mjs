@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installRecordPath, VERSION } from "../src/config.mjs";
@@ -36,7 +36,10 @@ import { formatHermesJob, HermesJobRefused, runHermesJob } from "../src/hermes-j
 import { formatTestRun, runTests } from "../src/test-run.mjs";
 import { runSetup, SetupCancelled, writeOpenRouterKey } from "../src/setup.mjs";
 
-const cliPath = fileURLToPath(import.meta.url);
+// Node resolves the deploy's app -> releases/<ver> symlink; record the stable app path so hooks survive later deploys.
+const realCliPath = fileURLToPath(import.meta.url);
+const stableCliPath = realCliPath.replace(/[\\/]releases[\\/][^\\/]+([\\/]bin[\\/])/, `${path.sep}app$1`);
+const cliPath = stableCliPath !== realCliPath && existsSync(stableCliPath) ? stableCliPath : realCliPath;
 const packageRoot = path.resolve(path.dirname(cliPath), "..");
 const [command = "status", ...args] = process.argv.slice(2);
 const store = new GuardStore();
@@ -88,7 +91,7 @@ try {
     const provider = args[0];
     if (!["claude", "codex"].includes(provider)) throw new Error("Hook provider must be `claude` or `codex`.");
     const input = await readStdinJson();
-    const output = await runProviderHook(store, provider, input, { eventName: args[1], claudeApi: { timeoutMs: 6000 } });
+    const output = await runProviderHook(store, provider, input, { eventName: args[1], claudeApi: { budgetMs: 4500 } });
     console.log(JSON.stringify(output));
     store.close();
   } else if (command === "serve") {
@@ -191,7 +194,7 @@ try {
     if (!kind || !taskFile) throw new Error("hermes-job needs --kind <type> and --task-file <file>.");
     await bestEffortProviderSyncs();
     try {
-      const summary = runHermesJob(store, {
+      const summary = await runHermesJob(store, {
         kind, taskFile,
         repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
         failedAttempts: numberOption(args, "--failed") ?? 0,
@@ -505,7 +508,6 @@ async function runSetupCommand() {
   const { readClaudeCodeToken } = await import("../src/providers/claude-api.mjs");
   const { guardHome } = await import("../src/config.mjs");
   const { homedir } = await import("node:os");
-  const { existsSync } = await import("node:fs");
   const toolsArg = stringOption(args, "--tools");
   try {
     await runSetup({
@@ -519,7 +521,7 @@ async function runSetupCommand() {
         yes: args.includes("--yes"),
         tools: toolsArg ? toolsArg.split(",").map((tool) => tool.trim()).filter(Boolean) : undefined,
       },
-      claudeLoginFound: () => Boolean(readClaudeCodeToken()),
+      claudeLoginFound: async () => Boolean(await readClaudeCodeToken()),
       openRouterKeySaved: () => existsSync(path.join(guardHome(), "openrouter.env")),
       writeOpenRouterKey: (key) => writeOpenRouterKey(guardHome(), key),
       readOpenRouterSpend,

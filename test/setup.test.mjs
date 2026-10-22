@@ -83,7 +83,7 @@ test("any mix of tools: Claude and Hermes, with a 10-minute check and no Codex c
   const ui = fakeUi([["claude", "hermes"], true, "sk-or-v1-abcdefghijklmnop", true]);
   const result = await runSetup({ ...d, ui });
   assert.equal(result.status, "installed");
-  assert.deepEqual(d.installs[0], { integrations: true, claude: true, codex: false, monitorIntervalMinutes: 10 });
+  assert.deepEqual(d.installs[0], { integrations: true, claude: true, codex: false, monitorIntervalMinutes: 2 });
   assert.deepEqual(d.store.getConfig().trackedProviders, ["claude", "hermes"]);
   assert.equal(d.store.getConfig().staleAfterMinutes, 25);
   const usage = ui.shown.find(([kind, title]) => kind === "note" && title === "Usage now")[2];
@@ -96,7 +96,7 @@ test("Codex only never asks about the Claude login, and a failed first reading i
   const ui = fakeUi([["codex"], true]);
   await runSetup({ ...d, ui });
   assert.ok(!ui.shown.some(([, message]) => /Claude Code login/.test(message || "")));
-  assert.deepEqual(d.installs[0], { integrations: true, claude: false, codex: true, monitorIntervalMinutes: 10 });
+  assert.deepEqual(d.installs[0], { integrations: true, claude: false, codex: true, monitorIntervalMinutes: 2 });
   assert.match(ui.shown.find(([, title]) => title === "Usage now")[2], /Codex: no reading yet \(codex not signed in\)/);
 });
 
@@ -124,7 +124,7 @@ test("--yes with --tools runs without prompts", async (t) => {
   const ui = fakeUi();
   await runSetup({ ...d, ui, options: { yes: true, tools: ["claude", "codex"] } });
   assert.ok(!ui.shown.some(([kind]) => ["confirm", "multiselect", "password"].includes(kind)));
-  assert.deepEqual(d.installs[0], { integrations: true, claude: true, codex: true, monitorIntervalMinutes: 10 });
+  assert.deepEqual(d.installs[0], { integrations: true, claude: true, codex: true, monitorIntervalMinutes: 2 });
 });
 
 test("tools found on the machine start ticked", () => {
@@ -139,15 +139,15 @@ test("the OpenRouter key file is private", () => {
   if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
 });
 
-test("macOS reads the Claude login from the Keychain", () => {
+test("macOS reads the Claude login from the Keychain", async () => {
   const calls = [];
-  const token = readClaudeCodeToken({
+  const token = await readClaudeCodeToken({
     platform: "darwin", now: 1,
     commandRunner: (command, args) => { calls.push([command, ...args]); return JSON.stringify({ claudeAiOauth: { accessToken: "k", expiresAt: 5 } }); },
   });
   assert.equal(token, "k");
   assert.deepEqual(calls[0], ["/usr/bin/security", "find-generic-password", "-s", "Claude Code-credentials", "-w"]);
-  assert.equal(readClaudeCodeToken({ platform: "darwin", commandRunner: () => { throw new Error("not found"); } }), null);
+  assert.equal(await readClaudeCodeToken({ platform: "darwin", commandRunner: () => { throw new Error("not found"); } }), null);
 });
 
 test("the background check runs every 10 minutes on Linux, macOS and Windows", () => {
@@ -174,13 +174,32 @@ test("an old fallback reading is labelled, not shown as current", async (t) => {
   assert.match(ui.shown.find(([, title]) => title === "Usage now")[2], /Claude: no live reading yet \(last known, 5h old: weekly 66%\)/);
 });
 
-test("Linux reads the Claude login from the keyring when the file has none", () => {
+test("Linux reads the Claude login from the keyring when the file has none", async () => {
   const calls = [];
   const login = JSON.stringify({ claudeAiOauth: { accessToken: "k", expiresAt: 5 } });
   const runner = (command, args) => { calls.push([command, ...args]); return login; };
   const homeDir = "/nonexistent-usage-guard-test";
-  assert.equal(readClaudeCodeToken({ platform: "linux", homeDir, env: {}, now: 1, commandRunner: runner }), "k");
+  assert.equal(await readClaudeCodeToken({ platform: "linux", homeDir, env: {}, now: 1, commandRunner: runner }), "k");
   assert.deepEqual(calls[0], ["secret-tool", "lookup", "service", "Claude Code-credentials"]);
-  assert.equal(readClaudeCodeToken({ platform: "linux", homeDir, env: {}, now: 9, commandRunner: runner }), null); // expired
-  assert.equal(readClaudeCodeToken({ platform: "linux", homeDir, env: {}, commandRunner: () => { throw new Error("no keyring"); } }), null);
+  assert.equal(await readClaudeCodeToken({ platform: "linux", homeDir, env: {}, now: 9, commandRunner: runner }), null); // expired
+  assert.equal(await readClaudeCodeToken({ platform: "linux", homeDir, env: {}, commandRunner: () => { throw new Error("no keyring"); } }), null);
+});
+
+test("answering No to the Claude login is stored, and Yes (or --yes) stores true", async (t) => {
+  const no = deps(t);
+  await runSetup({ ...no, ui: fakeUi([["claude"], false, true]) });
+  assert.equal(no.store.getConfig().claudeLoginAllowed, false);
+  const yes = deps(t);
+  await runSetup({ ...yes, ui: fakeUi([["claude"], true, true]) });
+  assert.equal(yes.store.getConfig().claudeLoginAllowed, true);
+  const auto = deps(t);
+  await runSetup({ ...auto, ui: fakeUi(), options: { yes: true, tools: ["claude"] } });
+  assert.equal(auto.store.getConfig().claudeLoginAllowed, true);
+});
+
+test("a Codex-only setup leaves an earlier No to the Claude login alone", async (t) => {
+  const d = deps(t, { which: () => "/usr/bin/x" });
+  d.store.setConfig({ claudeLoginAllowed: false });
+  await runSetup({ ...d, ui: fakeUi([["codex"], true]) });
+  assert.equal(d.store.getConfig().claudeLoginAllowed, false);
 });

@@ -59,10 +59,11 @@ cloud session: it stops in Claude Code on the web, Codespaces and similar, and
 asks first inside a container. Usage is read from the logins on your machine,
 so once it is installed there it also tracks the cloud sessions on the same
 accounts. It lets you pick any mix of Claude, Codex and Hermes (OpenRouter),
-asks before using your Claude Code login (macOS Keychain, or
-`~/.claude/.credentials.json` elsewhere), checks and privately saves your
-OpenRouter key, and sets up a background check every 10 minutes (systemd on
-Linux, launchd on macOS, Task Scheduler on Windows). It finishes with a first
+asks before using your Claude Code login (macOS Keychain; on Linux
+`~/.claude/.credentials.json`, then the Secret Service keyring), checks and privately saves your
+OpenRouter key, and sets up a background timer that ticks every two minutes and
+reads each lane every 10 minutes (systemd on Linux, launchd on macOS, Task
+Scheduler on Windows). It finishes with a first
 reading of each tool. For scripts: `usage-guard setup --yes --tools claude,codex`.
 `usage-guard install` remains the non-interactive installer for both tools.
 
@@ -175,7 +176,10 @@ usage-guard config qualityLock false modelStepping true
 usage-guard install --auto-compact-percent 50
 ```
 
-The dashboard runs on `http://127.0.0.1:4765` and binds only to localhost.
+The dashboard runs on `http://127.0.0.1:4765` and binds only to localhost. It
+has the same four tabs as the tray: **Overview**, **Models**, **History** and
+**Settings**. Its on/off switch is read-only; use the tray or
+`usage-guard enable|disable`.
 
 ## Model stepping
 
@@ -309,9 +313,13 @@ whose `Exec=` is the path to `usage-guard-tray`.
   running; otherwise each lane's use of today's share.
 - **Opening the panel:** on Linux, clicking the icon opens a menu; choose
   **Show details**. On Windows and macOS a left click opens it.
-- **Panel:** today's share against the budget per lane, the week bar with the
-  reserve, reset times, the current routing choice and why, the On/Off switch,
-  pause routing, the Hermes model picker, and the daily dollar cap.
+- **Panel:** four tabs. **Overview** shows the next-job route, the On/Off and
+  pause switches, and one compact row each for Claude, Codex and Hermes with
+  today and week bars. **Models** holds the Hermes model picker and your plan's
+  model ladders. **History** lists recent decisions and the Codex banked reset.
+  **Settings** sets the Hermes daily spend cap and explains how it works and the
+  privacy boundary.
+- The dashboard has the same four tabs, but its On/Off switch is read-only.
 - The Codex banked-reset button only opens Codex's usage page after you
   confirm. Usage Guard never spends a banked reset.
 
@@ -396,11 +404,19 @@ system time zone; set it with `install --day-time-zone` or
 `usage-guard config dayTimeZone Australia/Brisbane`). The starting figure is the
 last reading at or before the day start; readings from before Usage Guard was
 installed are filled in from Codex session logs and Claude Desktop's local
-usage cache. Unspent share rolls into later days automatically. Once
+usage cache. Unspent share rolls into later days automatically. If a weekly
+meter falls by more than 2 points mid-period, Usage Guard treats it as a
+provider reset and counts today's share from the reading after the drop
+(`src/daily-budget.mjs`). Once
 today's share is spent the provider moves to `protect` (never `queue`), the
 reason says how much was borrowed from later days, model stepping drops
 one rung, and `route` sends new work to another lane. It never asks for approval or denies a tool. Only the weekly reserve blocks work. Turn it off with
 `{"dailyBudget": false}`.
+
+The background timer ticks every two minutes. A lane whose daily share is spent
+is re-read on every tick; other lanes every 10 minutes (`pollDue` in
+`src/monitor.mjs`). Claude also refreshes at most once a minute while a Claude
+Code session is working.
 
 Claude context guidance defaults to `watch` at 70% and `protect` at 85%.
 Context pressure never changes the selected model and never causes a hard block
@@ -564,7 +580,7 @@ manufacture an estimate.
   described above.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
 - Linux: `usage-guard install` adds a systemd user timer
-  (`usage-guard-monitor.timer`) that checks Claude and Codex every minute, and
+  (`usage-guard-monitor.timer`) that runs the monitor on the timings above, and
   alerts use `notify-send`. Claude Desktop's aggregate cache is read from
   `~/.config/Claude` (or `$XDG_CONFIG_HOME/Claude`); it has no reset time, so the
   Claude daily share appears once the Claude Code status line has reported one.

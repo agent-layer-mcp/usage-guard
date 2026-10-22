@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rebuild the tray panel and the local dashboard UI around four tabs (Overview, Models, History,
+  Settings) with a shared stylesheet and code (`src/ui/`). The dashboard gains the Hermes model picker,
+  plan preset, spend cap, pause switch and banked-reset link that the tray already had.
 - Add a daily budget for weekly windows: an equal share of what is left above
   the reserve for each remaining local day (08:00 boundary by default). A spent
   share moves the provider to `protect`, reports borrowed percent, and steps

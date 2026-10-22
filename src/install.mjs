@@ -50,18 +50,33 @@ export function installIntegrations(options = {}) {
   const screenshotMemoryUpstream = configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
     ? existingRecord.screenshotMemory?.upstream || ANTHROPIC_API_URL
     : configuredClaudeBaseUrl || ANTHROPIC_API_URL;
+  // The record is saved after every step (and when one throws), so `uninstall` can undo a half-finished install.
+  // It starts from the old record, so sections for steps not reached yet keep their restore data.
   const record = {
+    ...existingRecord,
     installedAt: Date.now(),
     runtime,
     bootstrapRuntimePath,
     providers: normalizeProviderPaths(options.providerPaths),
     // integrations: false leaves Claude and Codex settings and plugins untouched.
     integrations: options.integrations !== false,
-    codex: options.integrations === false || options.codex === false
-      ? null : configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
   };
+  const save = () => writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  const step = (key, fn) => {
+    try {
+      record[key] = fn();
+    } catch (error) {
+      if (error.partial) record[key] = error.partial;
+      save();
+      throw error;
+    }
+    save();
+  };
+  const run = options.commandRunner || runCommand;
+  step("codex", () => (options.integrations === false || options.codex === false
+    ? null : configureCodex(path.join(home, ".codex", "config.toml"), stateHome, existingRecord.codex)));
   if (options.integrations !== false && options.claude !== false) {
-    record.screenshotMemory = configureScreenshotMemoryProxy({
+    step("screenshotMemory", () => configureScreenshotMemoryProxy({
       home,
       stateHome,
       runtime,
@@ -70,33 +85,35 @@ export function installIntegrations(options = {}) {
       enabled: options.installScreenshotMemory !== false,
       platform: options.platform,
       uid: options.uid,
-      commandRunner: options.commandRunner || runCommand,
+      commandRunner: run,
+    }));
+    step("claude", () => {
+      const claude = configureClaude(
+        claudeSettingsPath,
+        stateHome,
+        runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
+        {
+          screenshotMemoryUrl: record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
+          autoCompactPercent: options.autoCompactPercent,
+        },
+      );
+      const before = existingRecord.claude;
+      if (configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL && before && Object.hasOwn(before, "previousBaseUrl")) {
+        claude.previousBaseUrl = before.previousBaseUrl;
+      }
+      // A second install finds Usage Guard's own status line; the user's original is in the old record.
+      if (isOwnStatusLine(claude.previous) && before && Object.hasOwn(before, "previous")) claude.previous = before.previous;
+      preservePreviousClaudeEnvironment(claude, before);
+      return claude;
     });
-    record.claude = configureClaude(
-      claudeSettingsPath,
-      stateHome,
-      runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
-      {
-        screenshotMemoryUrl: record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
-        autoCompactPercent: options.autoCompactPercent,
-      },
-    );
-    if (
-      configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
-      && existingRecord.claude
-      && Object.hasOwn(existingRecord.claude, "previousBaseUrl")
-    ) {
-      record.claude.previousBaseUrl = existingRecord.claude.previousBaseUrl;
-    }
-    preservePreviousClaudeEnvironment(record.claude, existingRecord.claude);
   }
-  record.notifier = configureNativeNotifier({
+  step("notifier", () => configureNativeNotifier({
     packageRoot,
     stateHome,
     platform: options.platform,
-    commandRunner: options.commandRunner || runCommand,
-  });
-  record.monitor = configureBackgroundMonitor({
+    commandRunner: run,
+  }));
+  step("monitor", () => configureBackgroundMonitor({
     home,
     stateHome,
     runtime,
@@ -105,15 +122,16 @@ export function installIntegrations(options = {}) {
     intervalMinutes: options.monitorIntervalMinutes,
     platform: options.platform,
     uid: options.uid,
-    commandRunner: options.commandRunner || runCommand,
-  });
+    commandRunner: run,
+  }));
 
   if (options.installPlugins !== false && options.integrations !== false && packageRoot) {
-    record.plugins = installPlugins(packageRoot, options.commandRunner || runCommand, {
-      claude: options.claude !== false, codex: options.codex !== false,
-    });
+    // A tool that is not on PATH has no plugin to install; with providerPaths given, null means not found.
+    const found = (tool) => !options.providerPaths || Boolean(record.providers[tool]);
+    step("plugins", () => installPlugins(packageRoot, run, {
+      claude: options.claude !== false && found("claude"), codex: options.codex !== false && found("codex"),
+    }));
   }
-  writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   return record;
 }
 
@@ -239,8 +257,7 @@ export function configureScreenshotMemoryProxy(options = {}) {
     run("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], true);
   }
   writeFileSync(plistPath, plist, { mode: 0o600 });
-  run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
-  return {
+  const result = {
     enabled: true,
     platform,
     label: SCREENSHOT_MEMORY_LABEL,
@@ -250,6 +267,8 @@ export function configureScreenshotMemoryProxy(options = {}) {
     upstream,
     retentionTurns,
   };
+  withPartial(result, () => run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]));
+  return result;
 }
 
 export function inspectConfiguredIntegrations(options = {}) {
@@ -459,15 +478,15 @@ export function configureBackgroundMonitor(options = {}) {
     run("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], true);
   }
   writeFileSync(plistPath, plist, { mode: 0o600 });
-  run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
-
-  return {
+  const result = {
     enabled: true,
     label: MONITOR_LABEL,
     path: plistPath,
     previous,
     intervalSeconds: intervalMinutes * 60,
   };
+  withPartial(result, () => run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]));
+  return result;
 }
 
 // Windows: a Task Scheduler task runs one monitor cycle every few minutes.
@@ -500,6 +519,7 @@ Description=Usage Guard quota monitor
 
 [Service]
 Type=oneshot
+TimeoutStartSec=120
 Environment=${systemdQuote(`USAGE_GUARD_HOME=${stateHome}`)}
 ExecStart=${command}
 `, { mode: 0o600 });
@@ -529,12 +549,21 @@ Restart=on-failure
 [Install]
 WantedBy=default.target
 `, { mode: 0o600 });
-  run("systemctl", ["--user", "daemon-reload"]);
-  if (options.start !== false) run("systemctl", ["--user", "enable", "--now", `${SYSTEMD_UNIT}.timer`]);
-  return {
+  const result = {
     enabled: true, label: SYSTEMD_UNIT, path: timerPath, servicePath, servePath, previous, intervalSeconds: options.intervalMinutes * 60,
     started: options.start !== false,
   };
+  // The unit files exist now, so a failing systemctl still leaves the record `uninstall` needs.
+  withPartial(result, () => {
+    run("systemctl", ["--user", "daemon-reload"]);
+    if (options.start !== false) run("systemctl", ["--user", "enable", "--now", `${SYSTEMD_UNIT}.timer`]);
+  });
+  return result;
+}
+
+// Attach what was already changed to a thrown error, so installIntegrations can still record it.
+function withPartial(partial, fn) {
+  try { fn(); } catch (error) { error.partial = partial; throw error; }
 }
 
 function systemdQuote(value) {
@@ -552,13 +581,18 @@ export function setMonitorRunning(running, options = {}) {
   return true;
 }
 
-export function configureCodex(configPath, stateHome) {
+export function configureCodex(configPath, stateHome, existingRecord = null) {
   mkdirSync(path.dirname(configPath), { recursive: true });
   backupFile(configPath, stateHome, "codex-config.toml");
   const raw = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
   const parsed = raw.trim() ? parse(raw) : {};
-  const previous = Array.isArray(parsed.tui?.status_line) ? parsed.tui.status_line : null;
+  let previous = Array.isArray(parsed.tui?.status_line) ? parsed.tui.status_line : null;
   const merged = [...new Set([...(previous || []), ...CODEX_STATUS_ITEMS])];
+  // On a second install the list is the one Usage Guard wrote; keep the user's original from the old record.
+  if (existingRecord && Object.hasOwn(existingRecord, "previous")) {
+    const ours = new Set([...(existingRecord.previous || []), ...CODEX_STATUS_ITEMS]);
+    if (previous && previous.length === ours.size && previous.every((item) => ours.has(item))) previous = existingRecord.previous;
+  }
   const updated = upsertTomlArray(raw, "tui", "status_line", merged);
   parse(updated);
   writeFileSync(configPath, updated);
@@ -602,6 +636,11 @@ export function removeTomlKey(raw, section, key) {
   }
   const keyPattern = new RegExp(`^\\s*${escapeRegex(key)}\\s*=`);
   return lines.filter((item, index) => !(index > sectionStart && index < sectionEnd && keyPattern.test(item))).join("\n");
+}
+
+// Usage Guard's own status line command, however the runtime is spelled.
+function isOwnStatusLine(statusLine) {
+  return typeof statusLine?.command === "string" && /statusline\W+claude\W*$/.test(statusLine.command);
 }
 
 function restoreClaude(record) {
@@ -747,7 +786,8 @@ function runCommand(command, args, allowFailure = false) {
     return { command: `${command} ${args.join(" ")}`, ok: true, output: output.trim() };
   } catch (error) {
     const message = String(error.stderr || error.message || "Command failed").trim();
-    if (allowFailure || /already|exists|configured|installed/i.test(message)) {
+    // A missing program (ENOENT) is a real failure, whatever its message says.
+    if (allowFailure || (error.code !== "ENOENT" && /\balready\b/i.test(message))) {
       return { command: `${command} ${args.join(" ")}`, ok: true, output: message };
     }
     throw new Error(`${command} integration failed: ${message}`);

@@ -356,3 +356,66 @@ test("macOS native notifier is built into the private state directory", () => {
     path.join(stateHome, "Usage Guard.app"),
   ]);
 });
+
+function reinstallFixture(prefix) {
+  const root = mkdtempSync(path.join(os.tmpdir(), prefix));
+  const home = path.join(root, "home");
+  const stateHome = path.join(root, "state");
+  mkdirSync(path.join(home, ".claude"), { recursive: true });
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({ statusLine: { type: "command", command: "old" } }));
+  writeFileSync(path.join(home, ".codex", "config.toml"), "[tui]\nstatus_line = [\"model\"]\n");
+  const options = {
+    homeDir: home, stateHome, recordPath: path.join(stateHome, "install-record.json"),
+    installPlugins: false, installMonitor: false, platform: "linux",
+    runtime: { command: process.execPath, argsPrefix: [path.join(root, "usage-guard.mjs")] },
+    providerPaths: { claude: process.execPath, codex: process.execPath },
+  };
+  return { home, stateHome, options };
+}
+
+test("installing twice still restores the user's original settings on uninstall", () => {
+  const { home, options } = reinstallFixture("usage-guard-reinstall-");
+  installIntegrations(options);
+  installIntegrations(options);
+  uninstallIntegrations({ recordPath: options.recordPath, removePlugins: false });
+  const claude = JSON.parse(readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
+  assert.equal(claude.statusLine.command, "old");
+  assert.deepEqual(parse(readFileSync(path.join(home, ".codex", "config.toml"), "utf8")).tui.status_line, ["model"]);
+});
+
+test("a failing install step still leaves a record that uninstall can undo", () => {
+  const { home, options } = reinstallFixture("usage-guard-partial-");
+  const commandRunner = (command, args) => {
+    if (command === "systemctl") throw new Error("Failed to connect to bus");
+    return { ok: true };
+  };
+  assert.throws(() => installIntegrations({ ...options, installMonitor: true, commandRunner }), /Failed to connect/);
+  const record = JSON.parse(readFileSync(options.recordPath, "utf8"));
+  assert.equal(record.claude.previous.command, "old");
+  assert.ok(record.monitor.servicePath, "the unit files are recorded");
+  uninstallIntegrations({ recordPath: options.recordPath, removePlugins: false, platform: "linux", commandRunner: () => ({ ok: true }) });
+  assert.equal(JSON.parse(readFileSync(path.join(home, ".claude", "settings.json"), "utf8")).statusLine.command, "old");
+  assert.equal(existsSync(record.monitor.path), false);
+});
+
+test("plugin steps are skipped for a tool that is not installed", () => {
+  const { options } = reinstallFixture("usage-guard-plugins-");
+  const calls = [];
+  installIntegrations({
+    ...options, installPlugins: true, packageRoot: "/tmp/usage-guard-package",
+    providerPaths: { claude: process.execPath, codex: null },
+    commandRunner: (command, args) => { calls.push(command); return { ok: true }; },
+  });
+  assert.ok(calls.includes("claude"));
+  assert.ok(!calls.includes("codex"));
+});
+
+test("the Linux monitor service has a start timeout", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-timeout-"));
+  const monitor = configureBackgroundMonitor({
+    home: path.join(root, "h"), stateHome: path.join(root, "s"), platform: "linux", env: {}, intervalMinutes: 10,
+    runtime: { command: process.execPath, argsPrefix: ["/opt/ug.mjs"] }, commandRunner: () => ({ ok: true }),
+  });
+  assert.match(readFileSync(monitor.servicePath, "utf8"), /^TimeoutStartSec=120$/m);
+});

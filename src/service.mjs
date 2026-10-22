@@ -44,7 +44,9 @@ const CLAUDE_POLL_MS = 60_000;
 // every tool call, so the endpoint is asked at most once a minute (failures included).
 // The endpoint is polled only when options.claudeApi is given, so tests stay offline.
 export async function syncClaude(store, options = {}) {
-  if (options.claudeApi) {
+  // Only with the user's consent (setup answer) and while Claude is tracked.
+  const { claudeLoginAllowed, trackedProviders } = store.getConfig();
+  if (options.claudeApi && claudeLoginAllowed && trackedProviders.includes("claude")) {
     const now = options.claudeApi.now ?? Date.now();
     const last = store.getNoticeState("claude", "claude-oauth-poll");
     if (!last || now - last.updatedAt >= CLAUDE_POLL_MS) {

@@ -106,6 +106,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   codexFirstUntilLeftPercent: null,
   // Which tools the background check reads (chosen in `usage-guard setup`).
   trackedProviders: ["claude", "codex", "hermes"],
+  // Read Claude usage with the Claude Code login. On unless `usage-guard setup` was answered No.
+  claudeLoginAllowed: true,
 });
 
 export function guardHome(env = process.env) {
@@ -180,6 +182,7 @@ export function normalizeConfig(input = {}) {
     trackedProviders: Array.isArray(merged.trackedProviders)
       ? DEFAULT_CONFIG.trackedProviders.filter((provider) => merged.trackedProviders.includes(provider))
       : [...DEFAULT_CONFIG.trackedProviders],
+    claudeLoginAllowed: merged.claudeLoginAllowed !== false,
   };
 }
 
@@ -244,6 +247,7 @@ export const CONFIG_SCHEMA = {
     },
     codexFirstUntilLeftPercent: { anyOf: [{ type: "null" }, { type: "number", minimum: 0, maximum: 100 }] },
     hermesRepos: { type: "array", maxItems: 50, items: { type: "string", pattern: "^/", maxLength: 1024 } },
+    claudeLoginAllowed: { type: "boolean" },
     trackedProviders: { type: "array", maxItems: 3, items: { type: "string", enum: ["claude", "codex", "hermes"] } },
   },
 };

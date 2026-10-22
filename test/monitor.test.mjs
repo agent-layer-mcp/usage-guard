@@ -5,6 +5,7 @@ import {
   findTerminalNotifier,
   pollDue,
   runMonitorCycle,
+  notifyLinux,
   notifyMacOS,
 } from "../src/monitor.mjs";
 import { GuardStore } from "../src/store.mjs";
@@ -196,4 +197,13 @@ test("a spent lane is re-read every 2 minutes, others every 10", () => {
   save(70, at + 10 * 60_000); // today's share now spent
   assert.equal(pollDue(store, "codex", at + 12 * 60_000), true);
   assert.equal(pollDue(store, "codex", at + 13 * 60_000), false);
+});
+
+test("desktop notifier calls time out after 5 seconds", () => {
+  const seen = [];
+  notifyLinux({ title: "T", subtitle: "S", message: "M", state: "protect" }, { commandRunner: (c, a, o) => seen.push(o) });
+  notifyMacOS({ title: "T", subtitle: "S", message: "M", state: "protect" }, {
+    platform: "darwin", nativeNotifierPath: null, terminalNotifierPath: null, commandRunner: (c, a, o) => seen.push(o),
+  });
+  assert.deepEqual(seen.map((o) => o.timeout), [5000, 5000]);
 });

@@ -88,7 +88,7 @@ try {
     const provider = args[0];
     if (!["claude", "codex"].includes(provider)) throw new Error("Hook provider must be `claude` or `codex`.");
     const input = await readStdinJson();
-    const output = await runProviderHook(store, provider, input, { eventName: args[1], claudeApi: { timeoutMs: 6000 } });
+    const output = await runProviderHook(store, provider, input, { eventName: args[1], claudeApi: { budgetMs: 4500 } });
     console.log(JSON.stringify(output));
     store.close();
   } else if (command === "serve") {
@@ -519,7 +519,7 @@ async function runSetupCommand() {
         yes: args.includes("--yes"),
         tools: toolsArg ? toolsArg.split(",").map((tool) => tool.trim()).filter(Boolean) : undefined,
       },
-      claudeLoginFound: () => Boolean(readClaudeCodeToken()),
+      claudeLoginFound: async () => Boolean(await readClaudeCodeToken()),
       openRouterKeySaved: () => existsSync(path.join(guardHome(), "openrouter.env")),
       writeOpenRouterKey: (key) => writeOpenRouterKey(guardHome(), key),
       readOpenRouterSpend,

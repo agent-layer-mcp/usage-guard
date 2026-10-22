@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { checkTask, findSecretFiles, HermesJobRefused, runHermesJob } from "../src/hermes-job.mjs";
+import { checkTask, findSecretFiles, formatHermesJob, HermesJobRefused, hermesEnv, runHermesJob } from "../src/hermes-job.mjs";
 import { routeJob } from "../src/route.mjs";
 import { GuardStore } from "../src/store.mjs";
-import { summarizeTestOutput } from "../src/test-run.mjs";
+import { formatTestRun, runTests, summarizeTestOutput } from "../src/test-run.mjs";
 
 const HOUR = 60 * 60_000;
 const NOW = Date.UTC(2026, 9, 20, 1, 0);
@@ -173,4 +173,119 @@ test("a Hermes job that OpenRouter refuses for lack of credit is reported as fai
   });
   t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
   assert.equal(summary.ok, false);
+});
+
+test("task topic refusal survives spelling variants but not look-alike words", () => {
+  const refused = ["authenticate the user", "add an authenticator app", "fix authn", "check authz rules", "rotate the private_key", "load privateKey",
+    "the private-key path", "validate the JWT", "bearer header", "set the cookie", "copy the ssh key", "update /etc/passwd parser", "login credentials form",
+    "Sign-in page", "log in screen", "APIKey helper", "clientSecret field", "authorization header", "OAuth callback"];
+  const accepted = ["update the author line in the README", "authoring guide typo", "co-author credit", "authority table", "fix lint errors in src",
+    "write unit tests for parseDate", "tokenizer edge cases", "design interface docs"];
+  for (const task of refused) assert.throws(() => checkTask("test-write", task), HermesJobRefused, task);
+  for (const task of accepted) assert.doesNotThrow(() => checkTask("test-write", task), task);
+});
+
+test("secret-like files cover keystores, rc files and cloud credentials, at any depth", (t) => {
+  const dir = tempDir(t, "ug-secrets2-");
+  const names = [".npmrc", ".netrc", ".pgpass", ".git-credentials", "a.pfx", "a.p12", "a.keystore", "a.jks", "id_ecdsa", "id_ed25519.pub",
+    "prod.tfvars", "service-account-prod.json", "credentials-gcp.json", "deep/1/2/3/4/5/6/7/8/.env"];
+  for (const name of [...names, "package.json", "notes.md"]) {
+    spawnSync("mkdir", ["-p", path.dirname(path.join(dir, name))]);
+    writeFileSync(path.join(dir, name), "x");
+  }
+  assert.deepEqual(findSecretFiles(dir).sort(), [...names].sort());
+});
+
+test("hermes gets only an allowlisted environment", (t) => {
+  assert.deepEqual(hermesEnv({ PATH: "/bin", HOME: "/h", ANTHROPIC_API_KEY: "a", GITHUB_TOKEN: "g", CLAUDE_CODE_OAUTH_TOKEN: "c", OPENROUTER_API_KEY: "o" }),
+    { PATH: "/bin", HOME: "/h", OPENROUTER_API_KEY: "o" });
+  const repo = fakeRepo(t);
+  const home = tempDir(t, "ug-env-");
+  const bin = path.join(home, "fake-hermes");
+  writeFileSync(bin, "#!/bin/sh\nenv > env.txt\n");
+  chmodSync(bin, 0o755);
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "fix lint errors in src\n");
+  const summary = runHermesJob(storeWith(t, { hermesRepos: [repo] }), {
+    kind: "lint-format", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: bin,
+    env: { ...process.env, USAGE_GUARD_HOME: home, ANTHROPIC_API_KEY: "sk-leak", GITHUB_TOKEN: "gh-leak", CLAUDE_CODE_OAUTH_TOKEN: "oauth-leak" },
+  });
+  t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
+  const seen = readFileSync(path.join(summary.worktree, "env.txt"), "utf8");
+  assert.match(seen, /^HOME=/m);
+  assert.match(seen, new RegExp(`^USAGE_GUARD_HOME=${home}$`, "m"));
+  assert.doesNotMatch(seen, /leak|ANTHROPIC|GITHUB|OAUTH/);
+});
+
+test("a hung hermes is killed at the timeout and reported", (t) => {
+  const repo = fakeRepo(t);
+  const home = tempDir(t, "ug-timeout-");
+  const bin = path.join(home, "fake-hermes");
+  writeFileSync(bin, "#!/bin/sh\nexec sleep 30\n");
+  chmodSync(bin, 0o755);
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "fix lint errors in src\n");
+  const started = Date.now();
+  const summary = runHermesJob(storeWith(t, { hermesRepos: [repo] }), {
+    kind: "lint-format", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: bin, timeoutMs: 300,
+    env: { ...process.env, USAGE_GUARD_HOME: home },
+  });
+  t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
+  assert.ok(Date.now() - started < 10_000);
+  assert.equal(summary.ok, false);
+  assert.equal(summary.timedOut, true);
+  assert.match(formatHermesJob(summary), /timed out and was killed/);
+});
+
+test("test-run kills a hung command at the timeout", (t) => {
+  const home = tempDir(t, "ug-trun-");
+  const run = runTests(["sleep", "30"], { timeoutMs: 300, env: { ...process.env, USAGE_GUARD_HOME: home } });
+  assert.equal(run.timedOut, true);
+  assert.equal(run.passed, false);
+  assert.match(formatTestRun(run), /Timed out and was killed/);
+});
+
+test("the scratch worktree is removed when a refusal or a scan error happens after it is created", (t) => {
+  const home = tempDir(t, "ug-leak-");
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "fix lint errors in src\n");
+  const env = { ...process.env, USAGE_GUARD_HOME: home };
+  const worktrees = (repo) => spawnSync("git", ["-C", repo, "worktree", "list"], { encoding: "utf8" }).stdout.trim().split("\n").length;
+
+  const leaky = fakeRepo(t, { "src/a.js": "1\n", ".npmrc": "//registry/:_authToken=x\n" });
+  assert.throws(() => runHermesJob(storeWith(t, { hermesRepos: [leaky] }), { kind: "lint-format", taskFile, repo: leaky, payAsYouGo: hermes, now: NOW, env, hermesBin: "/bin/false" }), /\.npmrc/);
+  assert.equal(worktrees(leaky), 1);
+
+  // An unreadable directory makes the scan throw EACCES (skipped when running as root, which can read it anyway).
+  if (process.getuid?.() !== 0) {
+    const locked = fakeRepo(t, { "src/a.js": "1\n", "locked/b.js": "2\n" });
+    const hook = path.join(locked, ".git", "hooks", "post-checkout");
+    writeFileSync(hook, `#!/bin/sh\nchmod 000 "$PWD/locked"\n`);
+    chmodSync(hook, 0o755);
+    assert.throws(() => runHermesJob(storeWith(t, { hermesRepos: [locked] }), { kind: "lint-format", taskFile, repo: locked, payAsYouGo: hermes, now: NOW, env, hermesBin: "/bin/false" }), /EACCES/);
+    assert.equal(worktrees(locked), 1);
+  }
+});
+
+test("symlinks that leave the worktree are refused, ones that stay inside are fine", (t) => {
+  const outside = tempDir(t, "ug-outside-");
+  writeFileSync(path.join(outside, "secret.txt"), "top secret");
+  const repo = fakeRepo(t, { "src/a.js": "1\n" });
+  symlinkSync("a.js", path.join(repo, "src", "inside.js"));
+  const run = (...args) => assert.equal(spawnSync("git", ["-C", repo, ...args]).status, 0);
+  run("add", "-A");
+  run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "inside link");
+  assert.deepEqual(findSecretFiles(repo), []);
+
+  const home = tempDir(t, "ug-link-");
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "fix lint errors in src\n");
+  symlinkSync(outside, path.join(repo, "docs-link"));
+  symlinkSync("/nonexistent/target", path.join(repo, "dangling"));
+  run("add", "-A");
+  run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "escaping links");
+  assert.throws(() => runHermesJob(storeWith(t, { hermesRepos: [repo] }), {
+    kind: "lint-format", taskFile, repo, payAsYouGo: hermes, now: NOW, env: { ...process.env, USAGE_GUARD_HOME: home }, hermesBin: "/bin/false",
+  }), /symlinks that leave it \((docs-link, dangling|dangling, docs-link)\)/);
+  assert.equal(spawnSync("git", ["-C", repo, "worktree", "list"], { encoding: "utf8" }).stdout.trim().split("\n").length, 1);
 });

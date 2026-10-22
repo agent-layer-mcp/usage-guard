@@ -95,3 +95,21 @@ test("back-to-back identical decisions collapse into one line with a count", () 
   assert.equal((html.match(/<li>/g) || []).length, 3);
   assert.match(html, /observe <small>×3<\/small>/);
 });
+
+test("the dashboard API refuses other hosts and cross-site changes", async (t) => {
+  const store = new GuardStore({ filename: ":memory:" });
+  const dashboard = await startDashboard(store, { port: 40_000 + Math.floor(Math.random() * 20_000) });
+  t.after(() => { dashboard.server.close(); store.close(); });
+  const http = await import("node:http");
+  const send = (method, headers, body) => new Promise((resolve, reject) => {
+    const request = http.request(`${dashboard.url}/api/config`, { method, headers }, (response) => { response.resume(); resolve(response.statusCode); });
+    request.on("error", reject);
+    request.end(body);
+  });
+  const patch = JSON.stringify({ routingPaused: true });
+  assert.equal(await send("GET", { host: "attacker.example:4765" }), 403); // DNS rebinding
+  assert.equal(await send("PATCH", { "content-type": "application/json", origin: "https://attacker.example" }, patch), 403);
+  assert.equal(store.getConfig().routingPaused, false);
+  assert.equal(await send("PATCH", { "content-type": "application/json", origin: dashboard.url }, patch), 200);
+  assert.equal(await send("PATCH", { "content-type": "application/json" }, JSON.stringify({ routingPaused: false })), 200); // the tray sends no Origin
+});

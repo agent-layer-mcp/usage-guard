@@ -5,6 +5,9 @@ import { readOpenRouterSpend, routeJob } from "./route.mjs";
 import { completeStatus, syncCodex } from "./service.mjs";
 import { shellHtml } from "./ui/panel.js";
 
+const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+const LOOPBACK_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+
 export function startDashboard(store, options = {}) {
   const host = options.host || "127.0.0.1";
   let spend = { at: 0, value: null };
@@ -18,7 +21,12 @@ export function startDashboard(store, options = {}) {
   const port = Number(options.port || store.getConfig().dashboardPort);
   const server = http.createServer(async (request, response) => {
     try {
-      const url = new URL(request.url || "/", `http://${request.headers.host || `${host}:${port}`}`);
+      // DNS rebinding: only answer requests addressed to this machine by a loopback name.
+      if (!LOOPBACK_HOST.test(request.headers.host || "")) return json(response, 403, { error: "Forbidden host" });
+      // CSRF: a browser marks cross-site requests with Origin; changes must come from this page (the tray sends none).
+      const origin = request.headers.origin;
+      if (request.method !== "GET" && origin && !LOOPBACK_ORIGIN.test(origin)) return json(response, 403, { error: "Forbidden origin" });
+      const url = new URL(request.url || "/", `http://${request.headers.host}`);
       if (request.method === "GET" && url.pathname === "/") return html(response, dashboardHtml());
       if (request.method === "GET" && url.pathname.startsWith("/ui/") && Object.hasOwn(UI_FILES, url.pathname.slice(4))) return asset(response, url.pathname.slice(4));
       if (request.method === "GET" && url.pathname === "/api/status") return json(response, 200, completeStatus(store));
@@ -82,7 +90,8 @@ function html(response, value) {
   response.writeHead(200, {
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store",
-    "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
+    "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    "X-Frame-Options": "DENY",
   });
   response.end(value);
 }

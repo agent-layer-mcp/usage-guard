@@ -223,6 +223,7 @@ function hermesLane(config, spend) {
     // The dstest Hermes profile pins OpenRouter hosts and denies data collection; keep jobs on it.
     command: `hermes -p dstest --provider openrouter -m ${config.hermesModel} -z "<task>"`,
     workdir: "Run it from a scratch directory or a git worktree, never from a folder holding .env files or user data.",
+    outOfCredit: Boolean(spend?.outOfCredit),
     spentTodayUsd: spentUsd,
     dailyCapUsd: cap,
     remainingTodayUsd: spentUsd == null ? null : Math.max(0, cap - spentUsd),

@@ -48,6 +48,7 @@ test("Hermes shows dollars spent against the cap", () => {
   assert.equal(open.figure, "$0.40 of $5.00");
   assert.match(open.detail, /^\$0\.40 spent today · \$4\.60 left\./);
   assert.equal(hermesText({ available: false, spentTodayUsd: 5.2, dailyCapUsd: 5 }).pill, "Cap reached");
+  assert.equal(hermesText({ available: false, outOfCredit: true, spentTodayUsd: 0.1, dailyCapUsd: 5 }).pill, "No credit");
   assert.equal(hermesText({ available: false, spentTodayUsd: null, reason: "No key." }).pill, "Not set up");
 });
 

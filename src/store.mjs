@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { DEFAULT_CONFIG, databasePath, normalizeConfig, validateConfigPatch } from "./config.mjs";
+import { DEFAULT_CONFIG, databasePath, expandPlanPreset, normalizeConfig, validateConfigPatch } from "./config.mjs";
 
 export class GuardStore {
   constructor(options = {}) {
@@ -239,6 +239,23 @@ export class GuardStore {
     return row ? mapObservation(row) : null;
   }
 
+  earliestObservedAt(provider, windowKey) {
+    const row = this.database.prepare(
+      "SELECT MIN(observed_at) AS first FROM quota_observations WHERE provider = ? AND window_key = ?",
+    ).get(provider, windowKey);
+    return row?.first == null ? null : Number(row.first);
+  }
+
+  // Most recent reset any source reported for this window, past or future.
+  latestKnownReset(provider, windowKey) {
+    const row = this.database.prepare(`
+      SELECT resets_at, used_percent FROM quota_observations
+      WHERE provider = ? AND window_key = ? AND resets_at IS NOT NULL
+      ORDER BY observed_at DESC LIMIT 1
+    `).get(provider, windowKey);
+    return row ? { resetsAt: Number(row.resets_at), usedPercent: Number(row.used_percent) } : null;
+  }
+
   history(provider, windowKey, resetAt, since) {
     if (resetAt == null) {
       return this.database.prepare(`
@@ -256,6 +273,10 @@ export class GuardStore {
     return statement
       .all(provider, windowKey, since, resetAt)
       .map(mapObservation);
+  }
+
+  pruneDecisions(now = Date.now(), maxAgeMs = 14 * 24 * 60 * 60_000) {
+    this.database.prepare("DELETE FROM decisions WHERE created_at < ?").run(now - maxAgeMs);
   }
 
   recordDecision(decision) {
@@ -397,11 +418,14 @@ export class GuardStore {
         stored[row.key] = row.value;
       }
     }
+    // 0.6 renamed payAsYouGoModel to hermesModel.
+    if (stored.hermesModel == null && typeof stored.payAsYouGoModel === "string") stored.hermesModel = stored.payAsYouGoModel;
     return normalizeConfig({ ...DEFAULT_CONFIG, ...stored });
   }
 
-  setConfig(patch) {
-    validateConfigPatch(patch);
+  setConfig(input) {
+    validateConfigPatch(input);
+    const patch = expandPlanPreset(input);
     const next = normalizeConfig({ ...this.getConfig(), ...patch });
     const upsert = this.database.prepare(`
       INSERT INTO config(key, value) VALUES (?, ?)

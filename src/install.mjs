@@ -20,6 +20,10 @@ const CODEX_STATUS_ITEMS = [
   "weekly-limit",
 ];
 const MONITOR_LABEL = "sh.agentlayer.usage-guard.monitor";
+const SYSTEMD_UNIT = "usage-guard-monitor";
+const SYSTEMD_SERVE_UNIT = "usage-guard-serve";
+const SYSTEMD_MARKER = "Managed by Usage Guard";
+const WINDOWS_TASK = "Usage Guard monitor";
 const SCREENSHOT_MEMORY_LABEL = "sh.agentlayer.usage-guard.screenshot-memory";
 const SCREENSHOT_MEMORY_PORT = 47_822;
 const SCREENSHOT_MEMORY_URL = `http://127.0.0.1:${SCREENSHOT_MEMORY_PORT}`;
@@ -46,61 +50,88 @@ export function installIntegrations(options = {}) {
   const screenshotMemoryUpstream = configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
     ? existingRecord.screenshotMemory?.upstream || ANTHROPIC_API_URL
     : configuredClaudeBaseUrl || ANTHROPIC_API_URL;
+  // The record is saved after every step (and when one throws), so `uninstall` can undo a half-finished install.
+  // It starts from the old record, so sections for steps not reached yet keep their restore data.
   const record = {
+    ...existingRecord,
     installedAt: Date.now(),
     runtime,
     bootstrapRuntimePath,
     providers: normalizeProviderPaths(options.providerPaths),
-    codex: configureCodex(path.join(home, ".codex", "config.toml"), stateHome),
+    // integrations: false leaves Claude and Codex settings and plugins untouched.
+    integrations: options.integrations !== false,
   };
-  record.screenshotMemory = configureScreenshotMemoryProxy({
-    home,
-    stateHome,
-    runtime,
-    upstream: options.screenshotMemoryUpstream || screenshotMemoryUpstream,
-    retentionTurns: options.screenshotMemoryTurns || 5,
-    enabled: options.installScreenshotMemory !== false,
-    platform: options.platform,
-    uid: options.uid,
-    commandRunner: options.commandRunner || runCommand,
-  });
-  record.claude = configureClaude(
-    claudeSettingsPath,
-    stateHome,
-    runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
-    {
-      screenshotMemoryUrl: record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
-      autoCompactPercent: options.autoCompactPercent,
-    },
-  );
-  if (
-    configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL
-    && existingRecord.claude
-    && Object.hasOwn(existingRecord.claude, "previousBaseUrl")
-  ) {
-    record.claude.previousBaseUrl = existingRecord.claude.previousBaseUrl;
+  const save = () => writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  const step = (key, fn) => {
+    try {
+      record[key] = fn();
+    } catch (error) {
+      if (error.partial) record[key] = error.partial;
+      save();
+      throw error;
+    }
+    save();
+  };
+  const run = options.commandRunner || runCommand;
+  step("codex", () => (options.integrations === false || options.codex === false
+    ? existingRecord.codex ?? null : configureCodex(path.join(home, ".codex", "config.toml"), stateHome, existingRecord.codex)));
+  if (options.integrations !== false && options.claude !== false) {
+    step("screenshotMemory", () => configureScreenshotMemoryProxy({
+      home,
+      stateHome,
+      runtime,
+      upstream: options.screenshotMemoryUpstream || screenshotMemoryUpstream,
+      retentionTurns: options.screenshotMemoryTurns || 5,
+      enabled: options.installScreenshotMemory !== false,
+      platform: options.platform,
+      uid: options.uid,
+      commandRunner: run,
+    }));
+    step("claude", () => {
+      const claude = configureClaude(
+        claudeSettingsPath,
+        stateHome,
+        runtime ? runtimeCommand(runtime, ["statusline", "claude"]) : undefined,
+        {
+          screenshotMemoryUrl: record.screenshotMemory.enabled ? SCREENSHOT_MEMORY_URL : null,
+          autoCompactPercent: options.autoCompactPercent,
+        },
+      );
+      const before = existingRecord.claude;
+      if (configuredClaudeBaseUrl === SCREENSHOT_MEMORY_URL && before && Object.hasOwn(before, "previousBaseUrl")) {
+        claude.previousBaseUrl = before.previousBaseUrl;
+      }
+      // A second install finds Usage Guard's own status line; the user's original is in the old record.
+      if (isOwnStatusLine(claude.previous) && before && Object.hasOwn(before, "previous")) claude.previous = before.previous;
+      preservePreviousClaudeEnvironment(claude, before);
+      return claude;
+    });
   }
-  preservePreviousClaudeEnvironment(record.claude, existingRecord.claude);
-  record.notifier = configureNativeNotifier({
+  step("notifier", () => configureNativeNotifier({
     packageRoot,
     stateHome,
     platform: options.platform,
-    commandRunner: options.commandRunner || runCommand,
-  });
-  record.monitor = configureBackgroundMonitor({
+    commandRunner: run,
+  }));
+  step("monitor", () => configureBackgroundMonitor({
     home,
     stateHome,
     runtime,
     enabled: options.installMonitor !== false,
+    start: options.startMonitor !== false,
+    intervalMinutes: options.monitorIntervalMinutes,
     platform: options.platform,
     uid: options.uid,
-    commandRunner: options.commandRunner || runCommand,
-  });
+    commandRunner: run,
+  }));
 
-  if (options.installPlugins !== false && packageRoot) {
-    record.plugins = installPlugins(packageRoot, options.commandRunner || runCommand);
+  if (options.installPlugins !== false && options.integrations !== false && packageRoot) {
+    // A tool that is not on PATH has no plugin to install; with providerPaths given, null means not found.
+    const found = (tool) => !options.providerPaths || Boolean(record.providers[tool]);
+    step("plugins", () => installPlugins(packageRoot, run, {
+      claude: options.claude !== false && found("claude"), codex: options.codex !== false && found("codex"),
+    }));
   }
-  writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   return record;
 }
 
@@ -226,8 +257,7 @@ export function configureScreenshotMemoryProxy(options = {}) {
     run("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], true);
   }
   writeFileSync(plistPath, plist, { mode: 0o600 });
-  run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
-  return {
+  const result = {
     enabled: true,
     platform,
     label: SCREENSHOT_MEMORY_LABEL,
@@ -237,6 +267,8 @@ export function configureScreenshotMemoryProxy(options = {}) {
     upstream,
     retentionTurns,
   };
+  withPartial(result, () => run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]));
+  return result;
 }
 
 export function inspectConfiguredIntegrations(options = {}) {
@@ -282,12 +314,16 @@ export function inspectConfiguredIntegrations(options = {}) {
     && existsSync(bootstrapRuntime),
   );
   const monitorPath = record.monitor?.path
-    || path.join(home, "Library", "LaunchAgents", `${MONITOR_LABEL}.plist`);
-  const monitorReady = platform !== "darwin"
+    || (platform === "linux"
+      ? path.join(home, ".config", "systemd", "user", `${SYSTEMD_UNIT}.timer`)
+      : path.join(home, "Library", "LaunchAgents", `${MONITOR_LABEL}.plist`));
+  const monitorSupported = ["darwin", "linux"].includes(platform);
+  const monitorReady = !monitorSupported
     || Boolean(record.monitor?.enabled && existsSync(monitorPath));
   const notifierPath = record.notifier?.executable
     || path.join(stateHomeForRecord(recordPath, options.env), "Usage Guard.app", "Contents", "MacOS", "UsageGuardNotifier");
-  const notifierReady = platform !== "darwin" || existsSync(notifierPath);
+  const notifierReady = platform === "linux" ? existsSync(options.notifySendPath || "/usr/bin/notify-send")
+    : platform !== "darwin" || existsSync(notifierPath);
   const screenshotMemoryPath = record.screenshotMemory?.path
     || path.join(
       home,
@@ -344,7 +380,9 @@ export function inspectConfiguredIntegrations(options = {}) {
     {
       label: "Desktop notifications",
       ok: notifierReady,
-      detail: platform !== "darwin"
+      detail: platform === "linux"
+        ? notifierReady ? "notify-send alerts enabled" : "install libnotify (notify-send) for desktop alerts"
+        : platform !== "darwin"
         ? "not applicable on this platform"
         : notifierReady
           ? "native Usage Guard alerts enabled"
@@ -353,11 +391,13 @@ export function inspectConfiguredIntegrations(options = {}) {
     {
       label: "Desktop monitor",
       ok: monitorReady,
-      detail: platform !== "darwin"
+      detail: !monitorSupported
         ? "not applicable on this platform"
         : monitorReady
-          ? "checks aggregate Claude usage every minute"
-          : "rerun `usage-guard install` to enable macOS alerts",
+          ? platform === "linux"
+            ? "systemd user timer checks Claude and Codex every minute"
+            : "checks aggregate Claude usage every minute"
+          : `rerun \`usage-guard install\` to enable ${platform === "linux" ? "Linux" : "macOS"} alerts`,
     },
     {
       label: "Screenshot Memory",
@@ -411,9 +451,12 @@ export function configureNativeNotifier(options = {}) {
 
 export function configureBackgroundMonitor(options = {}) {
   const platform = options.platform || process.platform;
-  if (platform !== "darwin" || options.enabled === false || !options.runtime) {
+  if (!["darwin", "linux", "win32"].includes(platform) || options.enabled === false || !options.runtime) {
     return { enabled: false, platform };
   }
+  const intervalMinutes = Math.max(1, Math.round(options.intervalMinutes ?? 1));
+  if (platform === "linux") return configureSystemdMonitor({ ...options, intervalMinutes });
+  if (platform === "win32") return configureWindowsMonitor({ ...options, intervalMinutes });
 
   const home = options.home || os.homedir();
   const stateHome = options.stateHome || guardHome();
@@ -428,30 +471,128 @@ export function configureBackgroundMonitor(options = {}) {
     runtime: options.runtime,
     stateHome,
     stdoutPath: path.join(stateHome, "monitor.log"),
+    intervalSeconds: intervalMinutes * 60,
   });
 
   if (existsSync(plistPath)) {
     run("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], true);
   }
   writeFileSync(plistPath, plist, { mode: 0o600 });
-  run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
-
-  return {
+  const result = {
     enabled: true,
     label: MONITOR_LABEL,
     path: plistPath,
     previous,
-    intervalSeconds: 60,
+    intervalSeconds: intervalMinutes * 60,
   };
+  withPartial(result, () => run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]));
+  return result;
 }
 
-export function configureCodex(configPath, stateHome) {
+// Windows: a Task Scheduler task runs one monitor cycle every few minutes.
+// shortcut: the task uses the default ~/.usage-guard (no USAGE_GUARD_HOME); set one in a wrapper if that is ever needed.
+function configureWindowsMonitor(options) {
+  const run = options.commandRunner || runCommand;
+  const command = [options.runtime.command, ...options.runtime.argsPrefix, "monitor", "--once", "--quiet", "--provider", "all"]
+    .map((value) => `"${value}"`).join(" ");
+  run("schtasks", ["/Create", "/F", "/SC", "MINUTE", "/MO", String(options.intervalMinutes), "/TN", WINDOWS_TASK, "/TR", command]);
+  return { enabled: true, label: WINDOWS_TASK, path: WINDOWS_TASK, previous: null, intervalSeconds: options.intervalMinutes * 60 };
+}
+
+// Linux: a systemd user timer runs one monitor cycle for the tracked tools every few minutes.
+function configureSystemdMonitor(options) {
+  const home = options.home || os.homedir();
+  const stateHome = options.stateHome || guardHome();
+  const unitDir = path.join(options.env?.XDG_CONFIG_HOME || path.join(home, ".config"), "systemd", "user");
+  const servicePath = path.join(unitDir, `${SYSTEMD_UNIT}.service`);
+  const timerPath = path.join(unitDir, `${SYSTEMD_UNIT}.timer`);
+  const run = options.commandRunner || runCommand;
+  mkdirSync(unitDir, { recursive: true });
+  mkdirSync(stateHome, { recursive: true, mode: 0o700 });
+  const previous = existsSync(servicePath) && !readFileSync(servicePath, "utf8").includes(SYSTEMD_MARKER)
+    ? readFileSync(servicePath, "utf8") : null;
+  const command = [options.runtime.command, ...options.runtime.argsPrefix, "monitor", "--once", "--quiet", "--provider", "all"]
+    .map(systemdQuote).join(" ");
+  writeFileSync(servicePath, `# ${SYSTEMD_MARKER}
+[Unit]
+Description=Usage Guard quota monitor
+
+[Service]
+Type=oneshot
+TimeoutStartSec=120
+Environment=${systemdQuote(`USAGE_GUARD_HOME=${stateHome}`)}
+ExecStart=${command}
+`, { mode: 0o600 });
+  writeFileSync(timerPath, `# ${SYSTEMD_MARKER}
+[Unit]
+Description=Run the Usage Guard quota monitor every ${options.intervalMinutes} min
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=${options.intervalMinutes}min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+`, { mode: 0o600 });
+  // The local API for the tray; installed stopped, started with `systemctl --user enable --now usage-guard-serve`.
+  const servePath = path.join(unitDir, `${SYSTEMD_SERVE_UNIT}.service`);
+  writeFileSync(servePath, `# ${SYSTEMD_MARKER}
+[Unit]
+Description=Usage Guard local API for the tray
+
+[Service]
+Environment=${systemdQuote(`USAGE_GUARD_HOME=${stateHome}`)}
+ExecStart=${[options.runtime.command, ...options.runtime.argsPrefix, "serve"].map(systemdQuote).join(" ")}
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+`, { mode: 0o600 });
+  const result = {
+    enabled: true, label: SYSTEMD_UNIT, path: timerPath, servicePath, servePath, previous, intervalSeconds: options.intervalMinutes * 60,
+    started: options.start !== false,
+  };
+  // The unit files exist now, so a failing systemctl still leaves the record `uninstall` needs.
+  withPartial(result, () => {
+    run("systemctl", ["--user", "daemon-reload"]);
+    if (options.start !== false) run("systemctl", ["--user", "enable", "--now", `${SYSTEMD_UNIT}.timer`]);
+  });
+  return result;
+}
+
+// Attach what was already changed to a thrown error, so installIntegrations can still record it.
+function withPartial(partial, fn) {
+  try { fn(); } catch (error) { error.partial = partial; throw error; }
+}
+
+function systemdQuote(value) {
+  return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
+}
+
+// Master switch side effect: on Linux the monitor timer runs only while Usage Guard is enabled.
+export function setMonitorRunning(running, options = {}) {
+  const recordPath = options.recordPath || installRecordPath(options.env);
+  if (!existsSync(recordPath)) return false;
+  const monitor = readJsonFile(recordPath, {}).monitor;
+  if (!monitor?.enabled || !monitor.servicePath || (options.platform || process.platform) !== "linux") return false;
+  const run = options.commandRunner || runCommand;
+  run("systemctl", ["--user", running ? "enable" : "disable", "--now", `${monitor.label}.timer`], true);
+  return true;
+}
+
+export function configureCodex(configPath, stateHome, existingRecord = null) {
   mkdirSync(path.dirname(configPath), { recursive: true });
   backupFile(configPath, stateHome, "codex-config.toml");
   const raw = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
   const parsed = raw.trim() ? parse(raw) : {};
-  const previous = Array.isArray(parsed.tui?.status_line) ? parsed.tui.status_line : null;
+  let previous = Array.isArray(parsed.tui?.status_line) ? parsed.tui.status_line : null;
   const merged = [...new Set([...(previous || []), ...CODEX_STATUS_ITEMS])];
+  // On a second install the list is the one Usage Guard wrote; keep the user's original from the old record.
+  if (existingRecord && Object.hasOwn(existingRecord, "previous")) {
+    const ours = new Set([...(existingRecord.previous || []), ...CODEX_STATUS_ITEMS]);
+    if (previous && previous.length === ours.size && previous.every((item) => ours.has(item))) previous = existingRecord.previous;
+  }
   const updated = upsertTomlArray(raw, "tui", "status_line", merged);
   parse(updated);
   writeFileSync(configPath, updated);
@@ -495,6 +636,11 @@ export function removeTomlKey(raw, section, key) {
   }
   const keyPattern = new RegExp(`^\\s*${escapeRegex(key)}\\s*=`);
   return lines.filter((item, index) => !(index > sectionStart && index < sectionEnd && keyPattern.test(item))).join("\n");
+}
+
+// Usage Guard's own status line command, however the runtime is spelled.
+function isOwnStatusLine(statusLine) {
+  return typeof statusLine?.command === "string" && /statusline\W+claude\W*$/.test(statusLine.command);
 }
 
 function restoreClaude(record) {
@@ -564,8 +710,25 @@ function restoreCodex(record) {
 function restoreBackgroundMonitor(record, options = {}) {
   if (!record?.enabled || !record.path) return;
   const platform = options.platform || process.platform;
-  if (platform !== "darwin") return;
   const run = options.commandRunner || runCommand;
+  if (platform === "linux" && record.servicePath) {
+    run("systemctl", ["--user", "disable", "--now", `${record.label}.timer`], true);
+    if (record.servePath) {
+      run("systemctl", ["--user", "disable", "--now", `${SYSTEMD_SERVE_UNIT}.service`], true);
+      if (existsSync(record.servePath)) unlinkSync(record.servePath);
+    }
+    if (existsSync(record.path)) unlinkSync(record.path);
+    if (record.previous == null) {
+      if (existsSync(record.servicePath)) unlinkSync(record.servicePath);
+    } else writeFileSync(record.servicePath, record.previous, { mode: 0o600 });
+    run("systemctl", ["--user", "daemon-reload"], true);
+    return;
+  }
+  if (platform === "win32") {
+    run("schtasks", ["/Delete", "/F", "/TN", record.label], true);
+    return;
+  }
+  if (platform !== "darwin") return;
   const uid = options.uid ?? process.getuid?.();
   run("/bin/launchctl", ["bootout", `gui/${uid}`, record.path], true);
   if (record.previous == null) {
@@ -596,13 +759,17 @@ function restoreNativeNotifier(record) {
   rmSync(record.appPath, { recursive: true, force: true });
 }
 
-function installPlugins(packageRoot, run) {
+function installPlugins(packageRoot, run, tools = { claude: true, codex: true }) {
   const results = [];
-  results.push(run("claude", ["plugin", "marketplace", "add", packageRoot]));
-  results.push(run("claude", ["plugin", "install", "usage-guard@agent-layer", "--scope", "user"]));
-  results.push(run("claude", ["plugin", "update", "usage-guard@agent-layer", "--scope", "user"]));
-  results.push(run("codex", ["plugin", "marketplace", "add", packageRoot, "--json"]));
-  results.push(run("codex", ["plugin", "add", "usage-guard@agent-layer", "--json"]));
+  if (tools.claude) {
+    results.push(run("claude", ["plugin", "marketplace", "add", packageRoot]));
+    results.push(run("claude", ["plugin", "install", "usage-guard@agent-layer", "--scope", "user"]));
+    results.push(run("claude", ["plugin", "update", "usage-guard@agent-layer", "--scope", "user"]));
+  }
+  if (tools.codex) {
+    results.push(run("codex", ["plugin", "marketplace", "add", packageRoot, "--json"]));
+    results.push(run("codex", ["plugin", "add", "usage-guard@agent-layer", "--json"]));
+  }
   return results;
 }
 
@@ -613,13 +780,21 @@ function removePlugins(run) {
   run("codex", ["plugin", "marketplace", "remove", "agent-layer"], true);
 }
 
+// "already ..." always counts; "exists", "configured" and "installed" count unless negated ("not installed").
+export function isAlreadyPresent(message) {
+  if (/\balready\b/i.test(message)) return true;
+  return /\b(?:exists|configured|installed)\b/i.test(message)
+    && !/\b(?:not|no|never|cannot|can't|isn't|aren't|un)\b|n't\b|\bfail(?:ed|ure)?\b/i.test(message);
+}
+
 function runCommand(command, args, allowFailure = false) {
   try {
     const output = execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     return { command: `${command} ${args.join(" ")}`, ok: true, output: output.trim() };
   } catch (error) {
     const message = String(error.stderr || error.message || "Command failed").trim();
-    if (allowFailure || /already|exists|configured|installed/i.test(message)) {
+    // A missing program (ENOENT) is a real failure, whatever its message says.
+    if (allowFailure || (error.code !== "ENOENT" && isAlreadyPresent(message))) {
       return { command: `${command} ${args.join(" ")}`, ok: true, output: message };
     }
     throw new Error(`${command} integration failed: ${message}`);
@@ -672,14 +847,14 @@ function runtimeCommand(runtime, args = []) {
     .join(" ");
 }
 
-function monitorPlist({ runtime, stateHome, stdoutPath }) {
+function monitorPlist({ runtime, stateHome, stdoutPath, intervalSeconds = 60 }) {
   const args = [
     runtime.command,
     ...runtime.argsPrefix,
     "monitor",
     "--once",
     "--provider",
-    "claude",
+    "all",
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -699,7 +874,7 @@ ${args.map((value) => `    <string>${escapeXml(value)}</string>`).join("\n")}
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>
-  <integer>60</integer>
+  <integer>${intervalSeconds}</integer>
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>

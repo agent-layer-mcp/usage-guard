@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { VERSION } from "../src/config.mjs";
+import { installRecordPath, VERSION } from "../src/config.mjs";
 import { clearCompactionHandoffs } from "../src/compaction-handoff.mjs";
 import { startDashboard } from "../src/dashboard.mjs";
 import { runProviderHook } from "../src/hooks.mjs";
 import {
   inspectConfiguredIntegrations,
   installIntegrations,
+  setMonitorRunning,
   uninstallIntegrations,
 } from "../src/install.mjs";
 import { runMcpServer } from "../src/mcp.mjs";
@@ -21,15 +23,23 @@ import {
   startScreenshotMemoryProxy,
 } from "../src/screenshot-proxy.mjs";
 import {
+  claudeResetFromHours,
   completeStatus,
   ingestClaudeStatus,
   providerDecision,
-  syncClaudeDesktop,
+  syncClaude,
   syncCodex,
 } from "../src/service.mjs";
 import { GuardStore } from "../src/store.mjs";
+import { readOpenRouterSpend, routeJob } from "../src/route.mjs";
+import { formatHermesJob, HermesJobRefused, runHermesJob } from "../src/hermes-job.mjs";
+import { formatTestRun, runTests } from "../src/test-run.mjs";
+import { runSetup, SetupCancelled, writeOpenRouterKey } from "../src/setup.mjs";
 
-const cliPath = fileURLToPath(import.meta.url);
+// Node resolves the deploy's app -> releases/<ver> symlink; record the stable app path so hooks survive later deploys.
+const realCliPath = fileURLToPath(import.meta.url);
+const stableCliPath = realCliPath.replace(/[\\/]releases[\\/][^\\/]+([\\/]bin[\\/])/, `${path.sep}app$1`);
+const cliPath = stableCliPath !== realCliPath && existsSync(stableCliPath) ? stableCliPath : realCliPath;
 const packageRoot = path.resolve(path.dirname(cliPath), "..");
 const [command = "status", ...args] = process.argv.slice(2);
 const store = new GuardStore();
@@ -53,9 +63,9 @@ try {
     }
     const snapshots = {};
     if (["claude", "all"].includes(provider)) {
-      const snapshot = syncClaudeDesktop(store);
+      const snapshot = await syncClaude(store, { claudeApi: {} });
       if (!snapshot && provider === "claude") {
-        throw new Error("No supported Claude Desktop aggregate usage cache was found.");
+        throw new Error("No Claude usage reading: Claude Code login missing or expired, and no Claude Desktop usage cache was found.");
       }
       if (snapshot) snapshots.claude = snapshot.windows;
     }
@@ -66,18 +76,22 @@ try {
     console.log(JSON.stringify({ synced: Object.keys(snapshots), windows: snapshots }, null, 2));
     store.close();
   } else if (command === "statusline" && args[0] === "claude") {
-    const input = await readStdinJson();
-    const snapshot = ingestClaudeStatus(store, input);
-    const decision = providerDecision(store, "claude", {
-      sessionId: snapshot.sessionId,
-    });
-    console.log(formatStatusLine(decision));
+    let raw = "";
+    for await (const chunk of process.stdin) raw += chunk;
+    const snapshot = ingestClaudeStatus(store, raw.trim() ? JSON.parse(raw) : {});
+    // The status line Usage Guard replaced keeps running; off, its output is shown unchanged.
+    const previous = runPreviousStatusLine(raw);
+    if (store.getConfig().enabled === false) console.log(previous ?? "UG off");
+    else {
+      const guard = formatStatusLine(providerDecision(store, "claude", { sessionId: snapshot.sessionId }));
+      console.log(previous ? `${previous} | ${guard}` : guard);
+    }
     store.close();
   } else if (command === "hook") {
     const provider = args[0];
     if (!["claude", "codex"].includes(provider)) throw new Error("Hook provider must be `claude` or `codex`.");
     const input = await readStdinJson();
-    const output = await runProviderHook(store, provider, input, { eventName: args[1] });
+    const output = await runProviderHook(store, provider, input, { eventName: args[1], claudeApi: { budgetMs: 4500 } });
     console.log(JSON.stringify(output));
     store.close();
   } else if (command === "serve") {
@@ -93,7 +107,7 @@ try {
     process.on("SIGINT", close);
     process.on("SIGTERM", close);
   } else if (command === "mcp") {
-    bestEffortClaudeDesktopSync();
+    await bestEffortClaudeSync();
     runMcpServer(store);
     process.on("SIGINT", () => {
       store.close();
@@ -102,13 +116,13 @@ try {
   } else if (command === "monitor") {
     const providerIndex = args.indexOf("--provider");
     const provider = providerIndex >= 0 ? args[providerIndex + 1] : "claude";
-    if (!["claude", "codex"].includes(provider)) {
-      throw new Error("Monitor provider must be `claude` or `codex`.");
+    if (!["claude", "codex", "all"].includes(provider)) {
+      throw new Error("Monitor provider must be `claude`, `codex`, or `all`.");
     }
     const runOnce = async () => {
-      const results = await runMonitorCycle(store, { providers: [provider] });
+      const results = await runMonitorCycle(store, { providers: provider === "all" ? store.getConfig().trackedProviders.filter((name) => name !== "hermes") : [provider], claudeApi: {} });
       if (!args.includes("--quiet")) {
-        console.log(formatStatusLine(results[0].decision, { color: false }));
+        for (const result of results) console.log(formatStatusLine(result.decision, { color: false }));
       }
     };
     if (args.includes("--once")) {
@@ -156,17 +170,71 @@ try {
     } else {
       throw new Error("Screenshot Memory command must be `status` or `proxy`.");
     }
+  } else if (command === "route") {
+    const kind = stringOption(args, "--kind") || "code";
+    await bestEffortProviderSyncs();
+    ingestClaudeUsageOverride(args);
+    const route = routeJob(store, kind, {
+      payAsYouGo: await readOpenRouterSpend(),
+      repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
+      failedAttempts: numberOption(args, "--failed") ?? 0,
+    });
+    console.log(args.includes("--json") ? JSON.stringify(route, null, 2) : formatRoute(route));
+    store.close();
+    if (route.disabled) process.exitCode = 3; // Callers fall back to their own rules.
+  } else if (command === "test-run") {
+    const split = args.indexOf("--");
+    const run = runTests(split >= 0 ? args.slice(split + 1) : []);
+    console.log(args.slice(0, Math.max(split, 0)).includes("--json") ? JSON.stringify(run, null, 2) : formatTestRun(run));
+    store.close();
+    process.exitCode = run.exitCode;
+  } else if (command === "hermes-job") {
+    const kind = stringOption(args, "--kind");
+    const taskFile = stringOption(args, "--task-file");
+    if (!kind || !taskFile) throw new Error("hermes-job needs --kind <type> and --task-file <file>.");
+    await bestEffortProviderSyncs();
+    try {
+      const summary = await runHermesJob(store, {
+        kind, taskFile,
+        repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
+        failedAttempts: numberOption(args, "--failed") ?? 0,
+        payAsYouGo: await readOpenRouterSpend(),
+      });
+      console.log(args.includes("--json") ? JSON.stringify(summary, null, 2) : formatHermesJob(summary));
+      if (!summary.ok) process.exitCode = 1;
+    } catch (error) {
+      if (!(error instanceof HermesJobRefused)) throw error;
+      console.error(`Refused: ${error.message}`);
+      process.exitCode = 2;
+    } finally {
+      store.close();
+    }
+  } else if (command === "enable" || command === "disable") {
+    const enabled = command === "enable";
+    store.setConfig({ enabled });
+    const timer = setMonitorRunning(enabled);
+    console.log(`Usage Guard is ${enabled ? "on" : "off"}.${timer ? ` Monitor timer ${enabled ? "started" : "stopped"}.` : ""}`);
+    store.close();
   } else if (command === "config") {
     if (!args.length) console.log(JSON.stringify(store.getConfig(), null, 2));
+    else if (args[0] === "ladders") console.log(formatLadders(store.getConfig()));
     else {
       const patch = parseConfigArgs(args);
       console.log(JSON.stringify(store.setConfig(patch), null, 2));
     }
     store.close();
+  } else if (command === "setup") {
+    await runSetupCommand();
+    store.close();
   } else if (command === "install") {
+    const disabled = args.includes("--disabled");
+    const dayTimeZone = stringOption(args, "--day-time-zone");
+    if (disabled || dayTimeZone) store.setConfig({ ...(disabled ? { enabled: false } : {}), ...(dayTimeZone ? { dayTimeZone } : {}) });
     const record = installIntegrations({
       packageRoot,
       installPlugins: !args.includes("--settings-only"),
+      integrations: !args.includes("--no-integrations"),
+      startMonitor: !disabled,
       runtime: {
         command: process.execPath,
         argsPrefix: [cliPath],
@@ -177,7 +245,10 @@ try {
       },
       autoCompactPercent: numberOption(args, "--auto-compact-percent"),
     });
-    console.log(`Usage Guard installed for Claude Code and Codex.\nBackup and rollback record: ${record.installedAt}`);
+    console.log(record.integrations
+      ? `Usage Guard installed for Claude Code and Codex.\nBackup and rollback record: ${record.installedAt}`
+      : "Usage Guard installed without touching Claude or Codex settings. Run `usage-guard install` again to add them.");
+    if (disabled) console.log("Usage Guard is off. Run `usage-guard enable` to switch it on.");
     store.close();
   } else if (command === "uninstall") {
     uninstallIntegrations({ removePlugins: !args.includes("--settings-only") });
@@ -213,17 +284,82 @@ async function bestEffortCodexSync() {
   }
 }
 
-function bestEffortClaudeDesktopSync() {
+async function bestEffortClaudeSync() {
   try {
-    return syncClaudeDesktop(store);
+    return await syncClaude(store, { claudeApi: {} });
   } catch {
     return null;
   }
 }
 
+// Claude's plan limits from the host (e.g. Claude Desktop's get_usage) when no status line has reported them.
+function ingestClaudeUsageOverride(values) {
+  const used = numberOption(values, "--claude-used");
+  const hours = numberOption(values, "--claude-hours");
+  const exact = stringOption(values, "--claude-reset");
+  if (used == null || (hours == null && !exact)) return;
+  const now = Date.now();
+  const exactAt = exact ? Date.parse(exact) : NaN;
+  if (exact && !Number.isFinite(exactAt)) throw new Error("--claude-reset must be an ISO time.");
+  const resetsAt = exact ? exactAt : claudeResetFromHours(now, hours);
+  const fiveHour = numberOption(values, "--claude-5h");
+  store.saveSnapshot({
+    provider: "claude",
+    source: "host-usage",
+    observedAt: now,
+    windows: [
+      { key: "seven-day", label: "weekly", usedPercent: used, windowMinutes: 10_080, resetsAt },
+      ...(fiveHour == null ? [] : [{ key: "five-hour", label: "5 hour", usedPercent: fiveHour, windowMinutes: 300, resetsAt: null }]),
+    ],
+  });
+}
+
+function formatLadders(config) {
+  const lines = [`plan preset: ${config.planPreset}`];
+  for (const [provider, rungs] of Object.entries(config.modelLadders)) {
+    lines.push(`${provider}: ${rungs.map((r) => `${r.model} (${r.effort})`).join(" → ")}`);
+  }
+  lines.push(`hermes: ${config.hermesModel}`);
+  return lines.join("\n");
+}
+
+function formatRoute(route) {
+  const lines = [
+    `lane: ${route.lane}${route.model ? ` (${route.model}${route.effort ? `, ${route.effort}` : ""})` : ""}`,
+    `reason: ${route.reason}`,
+  ];
+  if (route.ladder && route.ladder !== "standard") {
+    lines.push(`models: from your ${route.ladder === "custom" ? "custom ladder" : `${route.ladder} plan preset`}`);
+  }
+  for (const lane of route.lanes) {
+    const share = lane.subscription
+      ? lane.todayBudgetPercent == null ? "no daily share yet"
+        : `today ${lane.usedTodayPercent.toFixed(1)}/${lane.todayBudgetPercent.toFixed(1)}%`
+      : lane.spentTodayUsd == null ? "spend unknown" : `$${lane.spentTodayUsd.toFixed(2)}/$${lane.dailyCapUsd} today`;
+    lines.push(`  ${lane.lane.padEnd(9)} ${lane.available ? "open  " : "closed"} ${share}  ${lane.reason}`);
+  }
+  if (route.command) lines.push(`run: ${route.command}`);
+  if (route.workdir) lines.push(`where: ${route.workdir}`);
+  if (route.lane === "hermes") lines.push(`note: ${route.privacy}`);
+  return lines.join("\n");
+}
+
 async function bestEffortProviderSyncs() {
-  bestEffortClaudeDesktopSync();
+  await bestEffortClaudeSync();
   await bestEffortCodexSync();
+}
+
+function runPreviousStatusLine(input) {
+  let command;
+  try {
+    command = JSON.parse(readFileSync(installRecordPath(), "utf8")).claude?.previous?.command;
+  } catch {
+    return null;
+  }
+  // Never call ourselves (an earlier Usage Guard status line).
+  if (typeof command !== "string" || !command.trim() || /usage-guard(?:\.mjs)?["']?\s+["']?statusline/.test(command)) return null;
+  const run = spawnSync("/bin/sh", ["-c", command], { input, encoding: "utf8", timeout: 3000 });
+  return run.status === 0 && run.stdout ? run.stdout.replace(/\n+$/, "") : null;
 }
 
 async function readStdinJson() {
@@ -268,7 +404,7 @@ function parseScalar(value) {
 }
 
 async function runDoctor() {
-  const claudeDesktopSnapshot = bestEffortClaudeDesktopSync();
+  const claudeDesktopSnapshot = await bestEffortClaudeSync();
   const config = store.getConfig();
   const stepping = config.modelStepping && !config.qualityLock;
   const claudeCommand = commandCheck("claude", ["--version"]);
@@ -326,6 +462,10 @@ function claudeLadderCompatibility(claudeCommand) {
 }
 
 function claudeDesktopCacheCheck(snapshot) {
+  if (snapshot?.source === "claude-oauth-usage") {
+    const readings = snapshot.windows.map((window) => `${window.label} ${window.usedPercent.toFixed(0)}%`).join(", ");
+    return { label: "Claude usage (Claude Code login)", ok: true, detail: `${readings}; observed ${new Date(snapshot.observedAt).toISOString()}` };
+  }
   if (process.platform !== "darwin") {
     return { label: "Claude desktop cache", ok: true, detail: "not applicable on this platform" };
   }
@@ -349,6 +489,56 @@ function commandCheck(executable, commandArgs) {
     ok: result.status === 0,
     detail: result.status === 0 ? (result.stdout || result.stderr).trim() : "not found",
   };
+}
+
+async function runSetupCommand() {
+  // Run from npx's temporary cache: install for good first, so the background check
+  // points at a path that stays put, then continue setup from that copy.
+  if (cliPath.includes(`${path.sep}_npx${path.sep}`)) {
+    console.log("Installing Usage Guard on this machine first (npm install --global)…");
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    const installed = spawnSync(npm, ["install", "--global", `@agent-layer/usage-guard@${VERSION}`], { stdio: "inherit" });
+    const bin = installed.status === 0 ? resolveExecutablePath("usage-guard") : null;
+    if (!bin) throw new Error("Couldn't install Usage Guard globally. Run `npm install --global @agent-layer/usage-guard`, then `usage-guard setup`.");
+    const rerun = spawnSync(bin, ["setup", ...args], { stdio: "inherit", shell: process.platform === "win32" });
+    process.exitCode = rerun.status ?? 1;
+    return;
+  }
+  const ui = await import("@clack/prompts");
+  const { readClaudeCodeToken } = await import("../src/providers/claude-api.mjs");
+  const { guardHome } = await import("../src/config.mjs");
+  const { homedir } = await import("node:os");
+  const toolsArg = stringOption(args, "--tools");
+  try {
+    await runSetup({
+      ui,
+      env: process.env,
+      platform: process.platform,
+      homeDir: homedir(),
+      which: resolveExecutablePath,
+      store,
+      options: {
+        yes: args.includes("--yes"),
+        tools: toolsArg ? toolsArg.split(",").map((tool) => tool.trim()).filter(Boolean) : undefined,
+      },
+      claudeLoginFound: async () => Boolean(await readClaudeCodeToken()),
+      openRouterKeySaved: () => existsSync(path.join(guardHome(), "openrouter.env")),
+      writeOpenRouterKey: (key) => writeOpenRouterKey(guardHome(), key),
+      readOpenRouterSpend,
+      syncClaude: () => syncClaude(store, { claudeApi: {} }),
+      syncCodex: () => syncCodex(store, { timeoutMs: 10_000 }),
+      install: (options) => installIntegrations({
+        ...options,
+        packageRoot,
+        runtime: { command: process.execPath, argsPrefix: [cliPath] },
+        providerPaths: { claude: resolveExecutablePath("claude"), codex: resolveExecutablePath("codex") },
+      }),
+    });
+  } catch (error) {
+    if (!(error instanceof SetupCancelled)) throw error;
+    ui.cancel(error.message);
+    process.exitCode = 1;
+  }
 }
 
 function resolveExecutablePath(executable) {
@@ -420,14 +610,31 @@ Commands:
   sync [claude|codex|all]       Refresh supported provider-local usage meters
   serve [--port 4765]           Run the local dashboard
   config [key value]            Read or change local policy (JSON for arrays/objects)
-  install [--auto-compact-percent 40]
-                                Install plugins, guards, and early compaction
+  config ladders                Show the model ladder per lane (top rung first)
+  config planPreset lower|standard|high
+                                Set both ladders from a plan preset
+  setup [--tools claude,codex,hermes] [--yes]
+                                Guided install on this machine: pick tools, check usage every 10 min
+  install [--auto-compact-percent 40] [--disabled] [--no-integrations] [--day-time-zone <zone>]
+                                Install plugins, guards, and early compaction.
+                                --disabled: install switched off, monitor stopped.
+                                --no-integrations: leave Claude/Codex settings and plugins alone.
   uninstall                     Remove integrations and restore prior settings
   doctor                        Verify providers, meters, and privacy boundary
   demo                          Load local example readings
   reset                         Clear local readings and decision history
   mcp                           Run the local MCP server over stdio
-  monitor [--once]              Monitor aggregate usage and show macOS alerts
+  enable | disable              Master switch: hooks, monitor and routing on or off
+  route [--kind code|review|plan|bulk] [--json] [--claude-used <pct> (--claude-reset <iso> | --claude-hours <h>) [--claude-5h <pct>]]
+                                Pick the lane (Claude, Codex, Hermes/OpenRouter) for the next job
+                                Hermes kinds: lint-format test-write test-triage doc-update rename-mechanical file-scan
+                                [--repo <path>] [--failed <n>] (n failed Hermes attempts; 2 escalates)
+  test-run [--json] -- <command>
+                                Run tests with no model; print only failures, keep the full log
+  hermes-job --kind <type> --task-file <file> [--repo <path>] [--failed <n>] [--json]
+                                Run one Hermes job in a scratch worktree, if every rule allows it
+  monitor [--once] [--provider claude|codex|all]
+                                Monitor usage and show desktop alerts (macOS, Linux)
   screenshot-memory status      Show local image-expiry savings
   screenshot-memory proxy       Run the local five-turn image-memory gateway
 

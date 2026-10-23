@@ -123,7 +123,7 @@ test("retains an authoritative status-line reset across Desktop percentage refre
   }));
 
   const snapshot = syncClaudeDesktop(store, { cachePath });
-  assert.equal(snapshot.source, "claude-desktop-aggregate-cache+status-line-reset");
+  assert.equal(snapshot.source, "claude-desktop-aggregate-cache");
   assert.equal(snapshot.windows[0].resetsAt, resetAt);
   assert.equal(store.latest("claude")[0].resetsAt, resetAt);
   store.close();
@@ -201,4 +201,78 @@ test("normalizes arbitrary Codex limit buckets", () => {
     "codex_fast:primary",
   ]);
   assert.deepEqual(snapshot.windows.map((window) => window.label), ["5 hour", "weekly", "Fast weekly"]);
+});
+
+test("Claude usage endpoint: parses windows, polls at most once a minute, falls back offline", async () => {
+  const { parseClaudeUsage, readClaudeCodeToken } = await import("../src/providers/claude-api.mjs");
+  const { syncClaude } = await import("../src/service.mjs");
+  const { GuardStore } = await import("../src/store.mjs");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const parsed = parseClaudeUsage({ five_hour: { utilization: 42, resets_at: "2026-10-21T10:00:00Z" }, seven_day: { utilization: 130, resets_at: null } }, 1);
+  assert.deepEqual(parsed.windows.map((w) => [w.key, w.usedPercent, w.resetsAt]), [["five-hour", 42, Date.parse("2026-10-21T10:00:00Z")], ["seven-day", 100, null]]);
+
+  const dir = mkdtempSync(join(tmpdir(), "ug-claude-api-"));
+  const credentialsPath = join(dir, ".credentials.json");
+  writeFileSync(credentialsPath, JSON.stringify({ claudeAiOauth: { accessToken: "t", expiresAt: 2_000 } }));
+  assert.equal(await readClaudeCodeToken({ credentialsPath, now: 1_000 }), "t");
+  assert.equal(await readClaudeCodeToken({ credentialsPath, now: 3_000 }), null);
+
+  const store = new GuardStore({ filename: join(dir, "guard.db") });
+  let calls = 0;
+  const fetch = async (url, init) => {
+    calls += 1;
+    assert.equal(init.headers.Authorization, "Bearer t");
+    return { ok: true, json: async () => ({ five_hour: { utilization: 10 }, seven_day: { utilization: 20 } }) };
+  };
+  const claudeApi = { credentialsPath, now: 1_000, fetch };
+  const first = await syncClaude(store, { claudeApi, claudeDesktop: { platform: "none" } });
+  assert.equal(first.source, "claude-oauth-usage");
+  assert.deepEqual(store.latest("claude").map((w) => w.usedPercent), [10, 20]);
+  await syncClaude(store, { claudeApi: { ...claudeApi, now: 30_000 }, claudeDesktop: { platform: "none" } });
+  assert.equal(calls, 1);
+  await syncClaude(store, { claudeApi: { ...claudeApi, now: 61_000 }, claudeDesktop: { platform: "none" } });
+  assert.equal(calls, 1, "expired login is not sent");
+  store.close();
+});
+
+test("Claude usage is not read without consent or when Claude is not tracked", async () => {
+  const { syncClaude } = await import("../src/service.mjs");
+  const { GuardStore } = await import("../src/store.mjs");
+  let reads = 0;
+  const claudeApi = { commandRunner: () => { reads += 1; return "{}"; }, platform: "darwin", fetch: async () => { throw new Error("no network"); } };
+  const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ claudeLoginAllowed: false });
+  await syncClaude(store, { claudeApi, claudeDesktop: { platform: "none" } });
+  assert.equal(reads, 0, "login not read after No");
+  store.setConfig({ claudeLoginAllowed: true, trackedProviders: ["codex"] });
+  await syncClaude(store, { claudeApi, claudeDesktop: { platform: "none" } });
+  assert.equal(reads, 0, "login not read when Claude is not tracked");
+  store.setConfig({ trackedProviders: ["claude"] });
+  await syncClaude(store, { claudeApi, claudeDesktop: { platform: "none" } });
+  assert.equal(reads, 1, "login read when allowed and tracked");
+  store.close();
+});
+
+test("Claude usage call stays inside its time budget", async () => {
+  const { fetchClaudeUsage } = await import("../src/providers/claude-api.mjs");
+  const login = JSON.stringify({ claudeAiOauth: { accessToken: "t", expiresAt: Date.now() + 60_000 } });
+  let signal;
+  const fetch = async (url, init) => { signal = init.signal; return { ok: false }; };
+  await fetchClaudeUsage({ platform: "darwin", commandRunner: () => login, fetch, budgetMs: 4000, timeoutMs: 15_000 });
+  assert.ok(signal, "request was made");
+  // Spent budget: the slow login read leaves nothing for the request.
+  let called = false;
+  const slow = async () => { await new Promise((r) => setTimeout(r, 60)); return login; };
+  const out = await fetchClaudeUsage({ platform: "darwin", commandRunner: slow, fetch: async () => { called = true; return { ok: false }; }, budgetMs: 100 });
+  assert.equal(out, null);
+  assert.equal(called, false);
+  // The login read's own timeout is capped by the budget and never 0 (execFile reads 0 as "no timeout").
+  const { loginReadTimeout } = await import("../src/providers/claude-api.mjs");
+  assert.equal(loginReadTimeout(0), 1);
+  assert.equal(loginReadTimeout(-50), 1);
+  assert.equal(loginReadTimeout(100), 100);
+  assert.ok(loginReadTimeout(undefined) > 1 && Number.isFinite(loginReadTimeout(undefined)));
 });

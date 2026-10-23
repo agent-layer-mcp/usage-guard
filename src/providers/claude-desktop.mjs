@@ -4,9 +4,13 @@ import path from "node:path";
 
 export function claudeDesktopUsagePath(options = {}) {
   const platform = options.platform ?? process.platform;
-  if (platform !== "darwin") return null;
   const homeDir = options.homeDir ?? os.homedir();
-  return path.join(homeDir, "Library", "Application Support", "Claude", "plan-usage-history.json");
+  const env = options.env ?? process.env;
+  const base = platform === "darwin" ? path.join(homeDir, "Library", "Application Support")
+    : platform === "linux" ? env.XDG_CONFIG_HOME || path.join(homeDir, ".config")
+      : platform === "win32" ? env.APPDATA || path.join(homeDir, "AppData", "Roaming")
+        : null;
+  return base ? path.join(base, "Claude", "plan-usage-history.json") : null;
 }
 
 export function readClaudeDesktopUsage(options = {}) {
@@ -18,6 +22,19 @@ export function readClaudeDesktopUsage(options = {}) {
     return parseClaudeDesktopUsage(payload, options);
   } catch {
     return null;
+  }
+}
+
+// Every cached sample, oldest first, for finding usage at the local day start.
+export function readClaudeDesktopSamples(options = {}) {
+  const cachePath = options.cachePath ?? claudeDesktopUsagePath(options);
+  if (!cachePath) return [];
+  try {
+    const payload = JSON.parse(readFileSync(cachePath, "utf8"));
+    return (Array.isArray(payload?.samples) ? payload.samples : []).map(normalizeSample).filter(Boolean)
+      .sort((left, right) => left.observedAt - right.observedAt);
+  } catch {
+    return [];
   }
 }
 

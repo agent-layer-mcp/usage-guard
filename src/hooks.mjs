@@ -1,6 +1,6 @@
 import { formatStatusLine } from "./presentation.mjs";
 import { readScreenshotMemoryStatus } from "./screenshot-proxy.mjs";
-import { providerDecision, syncClaudeDesktop, syncCodex } from "./service.mjs";
+import { providerDecision, syncClaude, syncCodex } from "./service.mjs";
 import {
   readCompactionHandoff,
   writeCompactionHandoff,
@@ -8,6 +8,8 @@ import {
 import { writeQuotaHandover } from "./quota-handover.mjs";
 
 export async function runProviderHook(store, provider, input, options = {}) {
+  // Master switch off: hooks are silent and never ask, deny or block.
+  if (store.getConfig().enabled === false) return {};
   const eventName = input.hook_event_name || input.hookEventName || options.eventName || "UserPromptSubmit";
   const prompt = input.prompt || input.user_prompt || input.userPrompt || "";
   const sessionId = input.session_id || input.sessionId || null;
@@ -30,7 +32,7 @@ export async function runProviderHook(store, provider, input, options = {}) {
     }
   } else if (provider === "claude") {
     try {
-      syncClaudeDesktop(store, options.claudeDesktop);
+      await syncClaude(store, { claudeDesktop: options.claudeDesktop, claudeApi: options.claudeApi });
     } catch {
       // An absent or changed desktop cache must not break Claude's hook lifecycle.
     }
@@ -129,6 +131,7 @@ export async function runProviderHook(store, provider, input, options = {}) {
     }
     if (
       decision.state === "protect"
+      && !decision.dailyShareOnly
       && !["protect", "queue"].includes(previousToolState?.state)
     ) {
       const reason = `${message}. ${decision.reason} Approve this tool only if it belongs to the one active implementation path.`;
@@ -143,7 +146,7 @@ export async function runProviderHook(store, provider, input, options = {}) {
       };
     }
     if (
-      decision.state === "watch"
+      (decision.state === "watch" || (decision.state === "protect" && decision.dailyShareOnly))
       && previousToolState?.state !== decision.state
     ) {
       return {

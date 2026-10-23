@@ -1,5 +1,6 @@
 import { formatReset, minutesUntil } from "./time.mjs";
 import { applyModelStepping, overnightSummary } from "./model-stepping.mjs";
+import { evaluateDailyBudget } from "./daily-budget.mjs";
 
 const STATE_ORDER = Object.freeze({ missing: -1, stale: 0, safe: 1, watch: 2, protect: 3, queue: 4 });
 
@@ -58,7 +59,9 @@ export function buildProviderDecision(store, provider, options = {}) {
   const windows = observations.map((observation) => {
     const since = Math.max(observation.observedAt - 24 * 60 * 60_000, now - 8 * 24 * 60 * 60_000);
     const history = store.history(provider, observation.key, observation.resetsAt, since);
-    return evaluateWindow(observation, history, config, now);
+    // Readings from any source (some carry no reset time) decide where today started.
+    const dayHistory = store.history(provider, observation.key, null, now - 36 * 60 * 60_000);
+    return evaluateWindow(observation, history, config, now, dayHistory);
   });
 
   const stepping = config.modelStepping && !config.qualityLock;
@@ -78,6 +81,9 @@ export function buildProviderDecision(store, provider, options = {}) {
       qualityLocked: config.qualityLock,
       blocked: false,
       stale: true,
+      // The last known share, shown as such; a stale lane still ranks after fresh ones.
+      daily: windows.find((window) => window.daily)?.daily || null,
+      lastReadingAt: newest,
       resetAt: soonestReset(windows),
       createdAt: now,
       windows,
@@ -103,10 +109,17 @@ export function buildProviderDecision(store, provider, options = {}) {
     reasonFor(controlling, quotaState, blocked),
     context?.state === "watch" || context?.state === "protect" ? context.reason : null,
   );
+  const daily = windows.find((window) => window.daily)?.daily || null;
+  const considered = stepping ? freshWindows : windows;
+  // Protect caused only by a spent daily share is advice: it must never ask or deny.
+  const dailyShareOnly = quotaState === "protect" && context?.state !== "protect"
+    && considered.filter((window) => window.state === "protect").every((window) => window.dailyShareOnly);
   const decision = {
     provider,
     state,
     quotaState,
+    daily,
+    dailyShareOnly,
     action,
     reason,
     taskClass,
@@ -124,7 +137,7 @@ export function buildProviderDecision(store, provider, options = {}) {
       contextInstructions(context, config),
     ),
   };
-  store.recordDecision(decision);
+  if (options.record !== false) store.recordDecision(decision);
   return applyModelStepping(store, decision, config, options);
 }
 
@@ -149,7 +162,7 @@ export function buildStatus(store, options = {}) {
   };
 }
 
-export function evaluateWindow(observation, history, config, now = Date.now()) {
+export function evaluateWindow(observation, history, config, now = Date.now(), dayHistory = history) {
   const remainingPercent = Math.max(0, 100 - observation.usedPercent);
   const resetMinutes = minutesUntil(observation.resetsAt, now);
   const reservePercent = reserveFor(observation.windowMinutes, config);
@@ -181,9 +194,16 @@ export function evaluateWindow(observation, history, config, now = Date.now()) {
     || (minutesUntilReserve != null && minutesUntilReserve <= config.rapidBurnWatchMinutes)
   ) state = "watch";
 
+  const daily = evaluateDailyBudget({ ...observation, reservePercent }, dayHistory, config, now);
+  // A spent daily share pushes new heavy work elsewhere; only the weekly reserve blocks.
+  const dailyShareOnly = Boolean(daily?.spent && STATE_ORDER[state] < STATE_ORDER.protect);
+  if (dailyShareOnly) state = "protect";
+
   return {
     ...observation,
     state,
+    daily,
+    dailyShareOnly,
     remainingPercent,
     reservePercent,
     usablePercent,
@@ -243,15 +263,16 @@ function estimateBurn(history, windowMinutes) {
   const segment = history.slice(segmentStart);
   if (segment.length < 2) return null;
   const latest = segment.at(-1);
-  const horizons = windowMinutes != null && windowMinutes <= 360
-    ? [15, 30, 60]
-    : [60, 360, 1_440];
+  const short = windowMinutes != null && windowMinutes <= 360;
+  const horizons = short ? [15, 30, 60] : [180, 360, 1_440];
+  // Meters report whole percents; over less than 3 hours one step reads as a weekly burn spike.
+  const minElapsed = short ? 2 : 180;
   const slopes = [];
 
   for (const horizonMinutes of horizons) {
     const candidates = segment.filter((candidate) => {
       const elapsed = (latest.observedAt - candidate.observedAt) / 60_000;
-      return elapsed >= 2 && elapsed <= horizonMinutes;
+      return elapsed >= minElapsed && elapsed <= horizonMinutes;
     });
     const comparison = candidates[0];
     if (!comparison) continue;
@@ -286,6 +307,12 @@ function reasonFor(window, state, blocked) {
   const reset = window.resetsAt ? ` ${formatReset(window.resetsAt)}.` : "";
   if (state === "queue") {
     return `${window.label} has ${window.remainingPercent.toFixed(1)}% left, at the protected ${window.reservePercent}% reserve.${reset}${blocked ? " New heavy work is paused." : ""}`;
+  }
+  if (state === "protect" && window.daily?.spent) {
+    const d = window.daily;
+    return `Today's share of ${window.label} is spent: ${d.usedTodayPercent.toFixed(1)}% used of ${d.todayBudgetPercent.toFixed(1)}%`
+      + `${d.borrowedPercent > 0 ? ` (${d.borrowedPercent.toFixed(1)}% borrowed from later days)` : ""}.`
+      + ` Route new heavy work to another provider; the next share starts ${formatReset(d.nextDayAt).replace("resets ", "")}.`;
   }
   if (state === "protect") return `${window.label} is under pressure.${pace}${rapidBurn}${reset}`;
   if (state === "watch") return `${window.label} is approaching its sustainable pace.${pace}${rapidBurn}${reset}`;

@@ -25,7 +25,7 @@ function fixture(t, usedPercent = 65) {
   return {
     root, store, stateHome,
     options: {
-      claudeDesktop: { platform: "linux" },
+      claudeDesktop: { platform: "none" },
       compactionHandoff: { stateHome },
       quotaHandover: { stateHome },
     },

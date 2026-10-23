@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   findNativeNotifier,
   findTerminalNotifier,
+  pollDue,
   runMonitorCycle,
+  notifyLinux,
   notifyMacOS,
 } from "../src/monitor.mjs";
 import { GuardStore } from "../src/store.mjs";
@@ -28,7 +30,7 @@ test("monitor notifies once on escalation and rearms after returning safe", asyn
   const cycle = () => runMonitorCycle(store, {
     providers: ["claude"],
     now,
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
     notifier: (notification) => notifications.push(notification),
   });
 
@@ -78,7 +80,7 @@ test("monitor alerts when short-window pressure takes control at the same overal
   const cycle = () => runMonitorCycle(store, {
     providers: ["claude"],
     now,
-    claudeDesktop: { platform: "linux" },
+    claudeDesktop: { platform: "none" },
     notifier: (notification) => notifications.push(notification),
   });
 
@@ -178,4 +180,44 @@ test("terminal-notifier discovery checks Apple Silicon and Intel Homebrew paths"
     exists: (candidate) => candidate === "/usr/local/bin/terminal-notifier",
   }), "/usr/local/bin/terminal-notifier");
   assert.equal(findTerminalNotifier({ exists: () => false }), null);
+});
+
+test("a spent lane is re-read every 2 minutes, others every 10", () => {
+  const store = new GuardStore({ filename: ":memory:" });
+  const day = Date.UTC(2026, 9, 19, 22, 0); // 08:00 local day start in Brisbane
+  store.setConfig({ dayTimeZone: "Australia/Brisbane" });
+  const at = day + 3 * 60 * 60_000;
+  const save = (usedPercent, observedAt) => store.saveSnapshot({ provider: "codex", source: "test", observedAt,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent, windowMinutes: 10_080, resetsAt: day + 3 * 24 * 60 * 60_000 }] });
+  save(40, day - 60_000);
+  save(41, at);
+  assert.equal(pollDue(store, "codex", at), true);
+  assert.equal(pollDue(store, "codex", at + 2 * 60_000), false); // share left: wait for 10 minutes
+  assert.equal(pollDue(store, "codex", at + 10 * 60_000), true);
+  save(70, at + 10 * 60_000); // today's share now spent
+  assert.equal(pollDue(store, "codex", at + 12 * 60_000), true);
+  assert.equal(pollDue(store, "codex", at + 13 * 60_000), false);
+});
+
+test("desktop notifier calls time out after 5 seconds", () => {
+  const seen = [];
+  notifyLinux({ title: "T", subtitle: "S", message: "M", state: "protect" }, { commandRunner: (c, a, o) => seen.push(o) });
+  notifyMacOS({ title: "T", subtitle: "S", message: "M", state: "protect" }, {
+    platform: "darwin", nativeNotifierPath: null, terminalNotifierPath: null, commandRunner: (c, a, o) => seen.push(o),
+  });
+  assert.deepEqual(seen.map((o) => o.timeout), [5000, 5000]);
+});
+
+test("a monitor cycle prunes decisions older than 14 days and keeps recent ones", async () => {
+  const store = new GuardStore({ filename: ":memory:" });
+  const now = Date.UTC(2026, 9, 22, 0, 0);
+  const day = 24 * 60 * 60_000;
+  const decision = (createdAt) => ({ provider: "claude", state: "safe", action: "continue", reason: "r", taskClass: "any", createdAt });
+  store.recordDecision(decision(now - 15 * day));
+  store.recordDecision(decision(now - 13 * day));
+  await runMonitorCycle(store, { providers: ["claude"], now, claudeDesktop: { platform: "none" }, notifier() {} });
+  const times = store.database.prepare("SELECT created_at FROM decisions").all().map((r) => r.created_at);
+  assert.ok(!times.includes(now - 15 * day));
+  assert.ok(times.includes(now - 13 * day));
+  store.close();
 });

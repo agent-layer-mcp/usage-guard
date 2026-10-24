@@ -346,14 +346,15 @@ the next job:
   and `bulk` to Codex while Codex has a fresh reading and at least 70% of its
   week left, ignoring Codex's daily share (the weekly reserve still applies).
   Below the line, or with a stale or missing reading, the normal rules apply and
-  the reason says so. Planning and review are unchanged, and this rule never
-  picks Hermes. `usage-guard config codexFirstUntilLeftPercent null` turns it off.
+  the reason says so. Planning and review are unchanged. Hermes-first kinds
+  (below) still go to Hermes ahead of this rule while Hermes is open. `usage-guard config codexFirstUntilLeftPercent null` turns it off.
 - Nothing left: the lane is `wait`, with the time the next daily share starts.
 - `{"routingPaused": true}` stops routing; a banked provider reset is never
   spent automatically.
-- Hermes job kinds (`lint-format`, `test-write`, `test-triage`, `doc-update`,
-  `rename-mechanical`, `file-scan`) go to Hermes first, all day, while it is under
-  the cap, but only for repos listed in `hermesRepos` (none by default). Pass
+- Hermes job kinds (`code`, `bulk`, `lint-format`, `test-write`, `test-triage`,
+  `doc-update`, `rename-mechanical`, `file-scan`) go to Hermes first, all day,
+  while it is under the cap, but only for repos listed in `hermesRepos` (none by
+  default). Hermes does the dev work; Claude keeps planning and review. Pass
   `--repo <path>` (default: the current folder) and `--failed <n>`; after two
   failed Hermes attempts the job escalates to Claude or Codex. See
   [docs/hermes-jobs.md](docs/hermes-jobs.md).

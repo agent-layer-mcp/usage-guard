@@ -59,8 +59,11 @@ test("Hermes job kinds go to Hermes first, only for opted-in repos", (t) => {
   const other = routeJob(store, "test-write", { now: NOW, payAsYouGo: hermes, repo: os.tmpdir(), record: false });
   assert.notEqual(other.lane, "hermes");
   assert.match(other.reason, /not in hermesRepos/);
-  // Plain code work keeps the old rule: subscriptions first while they have share.
-  assert.notEqual(routeJob(store, "code", { now: NOW, payAsYouGo: hermes, repo, record: false }).lane, "hermes");
+  // Dev work goes to Hermes too, even with the Codex-first rule on; planning and review stay on Claude.
+  assert.equal(routeJob(store, "code", { now: NOW, payAsYouGo: hermes, repo, record: false }).lane, "hermes");
+  const codexFirst = storeWith(t, { hermesRepos: [repo], codexFirstUntilLeftPercent: 10 });
+  assert.equal(routeJob(codexFirst, "bulk", { now: NOW, payAsYouGo: hermes, repo, record: false }).lane, "hermes");
+  assert.equal(routeJob(store, "plan", { now: NOW, payAsYouGo: hermes, repo, record: false }).lane, "claude");
 });
 
 test("a Hermes job escalates to a subscription after two failed attempts", (t) => {

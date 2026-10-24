@@ -100,7 +100,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   // Hermes (OpenRouter) lane model; deepseek-v4.1-flash-1017 was tested on 2026-10-19.
   hermesModel: "deepseek/deepseek-v4.1-flash-1017",
   // Job kinds that go to Hermes first, and the repos allowed to use it (opt-in, none by default).
-  hermesJobKinds: ["lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan"],
+  hermesJobKinds: ["code", "bulk", "lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan"],
   hermesRepos: [],
   // Lean on Codex: code and bulk go to Codex while its weekly % left is at or above this (null: off).
   codexFirstUntilLeftPercent: null,
@@ -242,8 +242,8 @@ export const CONFIG_SCHEMA = {
     payAsYouGoDailyCapUsd: { type: "number", minimum: 0, maximum: 1000 },
     hermesModel: { type: "string", pattern: "^[a-zA-Z0-9][a-zA-Z0-9._:/~-]{0,127}$" },
     hermesJobKinds: {
-      type: "array", maxItems: 6,
-      items: { type: "string", enum: ["lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan"] },
+      type: "array", maxItems: 8,
+      items: { type: "string", enum: ["code", "bulk", "lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan"] },
     },
     codexFirstUntilLeftPercent: { anyOf: [{ type: "null" }, { type: "number", minimum: 0, maximum: 100 }] },
     hermesRepos: { type: "array", maxItems: 50, items: { type: "string", pattern: "^/", maxLength: 1024 } },

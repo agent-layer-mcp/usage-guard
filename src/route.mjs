@@ -3,19 +3,20 @@ import path from "node:path";
 import { guardHome } from "./config.mjs";
 import { buildProviderDecision } from "./policy.mjs";
 
-// Small, checkable jobs that go to Hermes first (docs/hermes-jobs.md).
+// Dev work that goes to Hermes first; Claude keeps planning and review (docs/hermes-jobs.md).
 export const HERMES_KINDS = Object.freeze([
-  "lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan",
+  "code", "bulk", "lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan",
 ]);
-export const ROUTE_KINDS = Object.freeze(["code", "review", "plan", "bulk", ...HERMES_KINDS]);
+export const ROUTE_KINDS = Object.freeze(["review", "plan", ...HERMES_KINDS]);
 // Hermes jobs get one retry; after two failed attempts they go to a subscription lane.
 export const HERMES_MAX_ATTEMPTS = 2;
 const OVER_PACE_RATIO = 1.3; // matches the pace protect threshold in policy.mjs
 const ROUTINE_KINDS = new Set(["bulk", "lint-format", "doc-update", "rename-mechanical", "file-scan"]);
 const SUBSCRIPTION_LANES = ["claude", "codex"];
 
-// Pick the lane for the next job. Planning and review stay on Claude while its
-// daily share allows; other work goes to the lane with the most share left today.
+// Pick the lane for the next job. Hermes job kinds go to Hermes first while it is open,
+// ahead of the Codex-first rule. Planning and review stay on Claude while its daily share
+// allows; other work goes to the lane with the most share left today.
 export function routeJob(store, kind, options = {}) {
   if (!ROUTE_KINDS.includes(kind)) throw new TypeError(`Route kind must be one of: ${ROUTE_KINDS.join(", ")}.`);
   const now = options.now ?? Date.now();
@@ -39,8 +40,14 @@ export function routeJob(store, kind, options = {}) {
   } else {
     const open = lanes.filter((lane) => lane.available);
     const claude = open.find((lane) => lane.lane === "claude");
+    const hermesJob = HERMES_KINDS.includes(kind);
+    const gate = hermesJob ? hermesJobGate(kind, config, options) : null;
+    const hermesOpen = open.find((lane) => !lane.subscription) || null;
     const codexFirst = codexFirstRule(kind, config, lanes);
-    if (codexFirst?.applies) {
+    if (gate?.ok && hermesOpen) {
+      choice = hermesOpen;
+      reason = `${kind} goes to ${laneName(choice.lane)} first while it is under its $${config.payAsYouGoDailyCapUsd} daily cap.`;
+    } else if (codexFirst?.applies) {
       choice = lanes.find((lane) => lane.lane === "codex");
       reason = codexFirst.reason;
     } else if ((kind === "plan" || kind === "review") && claude?.verified) {
@@ -57,9 +64,9 @@ export function routeJob(store, kind, options = {}) {
         || b.remainingTodayPercent - a.remainingTodayPercent)[0] || null;
       const passedOver = subscriptions.find((lane) => lane !== best && lane.overPace && best && !best.overPace
         && lane.remainingTodayPercent > best.remainingTodayPercent);
-      const hermesJob = HERMES_KINDS.includes(kind);
-      const gate = hermesJob ? hermesJobGate(kind, config, options) : null;
-      const payAsYouGo = kind === "plan" || kind === "review" || (gate && !gate.ok) ? null
+      // Code and bulk outside the Hermes-first gate keep the old last-resort use of Hermes.
+      const gateBlocks = gate && !gate.ok && kind !== "code" && kind !== "bulk";
+      const payAsYouGo = kind === "plan" || kind === "review" || gateBlocks ? null
         : open.find((lane) => !lane.subscription) || null;
       // With one subscription spent and the other nearly so, use the capped pay-as-you-go lane before
       // squeezing the last of the other's share (a banked reset is only ever spent by the user).
@@ -88,7 +95,7 @@ export function routeJob(store, kind, options = {}) {
       if ((kind === "plan" || kind === "review") && claude && !claude.verified && choice?.lane === "codex") {
         reason = `Claude has no fresh reading, so ${kind === "plan" ? "planning" : "review"} goes to Codex. ${reason}`;
       }
-      if (gate && !gate.ok && choice) reason = `${gate.reason} ${reason}`;
+      if (gateBlocks && choice) reason = `${gate.reason} ${reason}`;
       if (codexFirst) reason = `${codexFirst.reason} ${reason}`;
     }
   }

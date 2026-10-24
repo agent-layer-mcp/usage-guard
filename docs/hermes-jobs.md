@@ -48,6 +48,8 @@ Only the files named in the job's inputs are given to the model.
 | Kind | Trigger (request that matches) | Lane | Inputs allowed | Output |
 |---|---|---|---|---|
 | `test-run` | "run the tests", "full test run", any post-feature check | plain script, no model | the repo's test command | pass/fail and a failure summary (test name, error, up to 20 trace lines each) |
+| `code` | feature and fix work | Hermes | the files the task names | a diff; tests must pass; Claude reviews it |
+| `bulk` | large, repetitive edits | Hermes | the files the task names | a diff; tests must pass; Claude reviews it |
 | `lint-format` | fix lint or formatting errors | Hermes | lint output; the files it names | a diff; lint must then pass |
 | `test-write` | write unit tests for finished, reviewed code | Hermes | the target source files; existing tests nearby; fake fixtures | new or changed test files only |
 | `test-triage` | a `test-run` failed: is the test or the code wrong? | Hermes | the failure summary; the failing test file; the code under test | a verdict (`test-bug` / `code-bug` / `unclear`) with one line of reason; for `test-bug`, a test-only diff |

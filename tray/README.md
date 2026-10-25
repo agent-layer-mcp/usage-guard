@@ -28,3 +28,15 @@ cd tray && cargo build --release
 
 `cargo tauri build` (with the Tauri CLI) produces installers for the current
 platform.
+
+On a Mac, the `Mac tray` GitHub workflow builds one universal `.dmg` (Apple
+Silicon and Intel) and attaches it to each published release as
+`usage-guard-tray-macos.dmg`. To build it yourself on a Mac:
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm install --global @tauri-apps/cli@2
+cd tray && tauri build --target universal-apple-darwin --bundles dmg
+```
+
+The app is unsigned: right-click → **Open** on first launch.

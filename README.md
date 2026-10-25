@@ -358,6 +358,24 @@ usage-guard-tray &                                 # or: usage-guard serve, then
 To start it at login on Linux, add a desktop entry to `~/.config/autostart/`
 whose `Exec=` is the path to `usage-guard-tray`.
 
+On a Mac:
+
+1. Run `usage-guard install` (or `setup`). Besides the monitor, it adds a login
+   service, `sh.agentlayer.usage-guard.serve`, that keeps the tray's local API
+   running; `usage-guard uninstall` removes it.
+2. Download `usage-guard-tray-macos.dmg` from the latest
+   [release](https://github.com/agent-layer-mcp/usage-guard/releases/latest)
+   (one build for Apple Silicon and Intel) and drag **Usage Guard** to
+   Applications.
+3. The app is not signed, so the first time, right-click it in Applications
+   and choose **Open**, then **Open** again. After that it opens normally.
+4. To start it at login: System Settings → General → Login Items → add
+   **Usage Guard**.
+
+It lives in the menu bar only (no Dock icon). A left click opens the panel.
+The `.dmg` is built by the `Mac tray` GitHub workflow when a release is
+published; run that workflow by hand to get one as a build artifact.
+
 - **Label:** `UG off` when switched off, `UG offline` when the local API is not
   running; otherwise each lane's use of today's share.
 - **Opening the panel:** on Linux, clicking the icon opens a menu; choose

@@ -20,6 +20,7 @@ const CODEX_STATUS_ITEMS = [
   "weekly-limit",
 ];
 const MONITOR_LABEL = "sh.agentlayer.usage-guard.monitor";
+const SERVE_LABEL = "sh.agentlayer.usage-guard.serve";
 const SYSTEMD_UNIT = "usage-guard-monitor";
 const SYSTEMD_SERVE_UNIT = "usage-guard-serve";
 const SYSTEMD_MARKER = "Managed by Usage Guard";
@@ -474,18 +475,27 @@ export function configureBackgroundMonitor(options = {}) {
     intervalSeconds: intervalMinutes * 60,
   });
 
-  if (existsSync(plistPath)) {
-    run("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], true);
+  // The local API for the tray, kept running from login (Linux installs it as a systemd service instead).
+  const servePath = path.join(home, "Library", "LaunchAgents", `${SERVE_LABEL}.plist`);
+  const serve = servePlist({ runtime: options.runtime, stateHome, stdoutPath: path.join(stateHome, "serve.log") });
+
+  for (const existingPath of [plistPath, servePath]) {
+    if (existsSync(existingPath)) run("/bin/launchctl", ["bootout", `gui/${uid}`, existingPath], true);
   }
   writeFileSync(plistPath, plist, { mode: 0o600 });
+  writeFileSync(servePath, serve, { mode: 0o600 });
   const result = {
     enabled: true,
     label: MONITOR_LABEL,
     path: plistPath,
+    servePath,
     previous,
     intervalSeconds: intervalMinutes * 60,
   };
-  withPartial(result, () => run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]));
+  withPartial(result, () => {
+    run("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
+    run("/bin/launchctl", ["bootstrap", `gui/${uid}`, servePath]);
+  });
   return result;
 }
 
@@ -730,6 +740,10 @@ function restoreBackgroundMonitor(record, options = {}) {
   }
   if (platform !== "darwin") return;
   const uid = options.uid ?? process.getuid?.();
+  if (record.servePath) {
+    run("/bin/launchctl", ["bootout", `gui/${uid}`, record.servePath], true);
+    if (existsSync(record.servePath)) unlinkSync(record.servePath);
+  }
   run("/bin/launchctl", ["bootout", `gui/${uid}`, record.path], true);
   if (record.previous == null) {
     if (existsSync(record.path)) unlinkSync(record.path);
@@ -875,6 +889,38 @@ ${args.map((value) => `    <string>${escapeXml(value)}</string>`).join("\n")}
   <true/>
   <key>StartInterval</key>
   <integer>${intervalSeconds}</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>${escapeXml(stdoutPath)}</string>
+  <key>StandardErrorPath</key>
+  <string>${escapeXml(stdoutPath)}</string>
+</dict>
+</plist>
+`;
+}
+
+function servePlist({ runtime, stateHome, stdoutPath }) {
+  const args = [runtime.command, ...runtime.argsPrefix, "serve"];
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${SERVE_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${args.map((value) => `    <string>${escapeXml(value)}</string>`).join("\n")}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>USAGE_GUARD_HOME</key>
+    <string>${escapeXml(stateHome)}</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>

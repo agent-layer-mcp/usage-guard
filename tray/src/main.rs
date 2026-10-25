@@ -169,6 +169,9 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![guard_status, guard_route, guard_models, set_config, set_enabled, set_tray_label, open_codex_usage])
         .setup(|app| {
+            // A menu-bar app on macOS: no Dock icon or app switcher entry.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let switch = MenuItem::with_id(app, "switch", "Turn Usage Guard on/off", true, None::<&str>)?;
             let details = MenuItem::with_id(app, "details", "Show details", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -192,6 +195,11 @@ fn main() {
                 });
             // Light variant of the mark: tray bars are dark on Linux and Windows by default.
             tray = tray.icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray-light.png"))?);
+            // macOS recolours a template icon to suit a light or dark menu bar.
+            #[cfg(target_os = "macos")]
+            {
+                tray = tray.icon_as_template(true);
+            }
             tray.build(app)?;
             Ok(())
         })

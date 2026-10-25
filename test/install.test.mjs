@@ -452,3 +452,27 @@ test("an already-installed plugin counts as success, a failure that merely menti
     assert.equal(isAlreadyPresent(bad), false, bad);
   }
 });
+
+test("macOS also starts the tray's local API at login, and uninstall removes it", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "usage-guard-serve-"));
+  const calls = [];
+  const commandRunner = (command, args) => { calls.push([command, ...args]); return { ok: true }; };
+  const monitor = configureBackgroundMonitor({
+    home: path.join(root, "home"), stateHome: path.join(root, "state"),
+    runtime: { command: process.execPath, argsPrefix: ["/tmp/usage guard.mjs"] },
+    platform: "darwin", uid: 501, commandRunner,
+  });
+  const plist = readFileSync(monitor.servePath, "utf8");
+  assert.match(plist, /sh\.agentlayer\.usage-guard\.serve/);
+  assert.match(plist, /<string>serve<\/string>/);
+  assert.match(plist, /<key>KeepAlive<\/key>\s*<true\/>/);
+  assert.match(plist, /<key>RunAtLoad<\/key>\s*<true\/>/);
+  assert.ok(calls.some((call) => call[1] === "bootstrap" && call[3] === monitor.servePath));
+
+  const recordPath = path.join(root, "state", "install-record.json");
+  writeFileSync(recordPath, JSON.stringify({ monitor }));
+  calls.length = 0;
+  uninstallIntegrations({ recordPath, platform: "darwin", uid: 501, commandRunner, removePlugins: false });
+  assert.ok(calls.some((call) => call[1] === "bootout" && call[3] === monitor.servePath));
+  assert.equal(existsSync(monitor.servePath), false);
+});

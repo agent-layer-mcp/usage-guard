@@ -18,16 +18,16 @@ jobs:
       run:
         working-directory: tray
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: tray
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - run: npm install --global @tauri-apps/cli@2
       - run: tauri build --target universal-apple-darwin --bundles dmg
       - name: Give the .dmg a stable name
@@ -37,7 +37,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" usage-guard-tray-macos.dmg --clobber
-      - uses: actions/upload-artifact@v4
+      # archive: false uploads the .dmg itself, not a zip around it.
+      - uses: actions/upload-artifact@v7
         with:
-          name: usage-guard-tray-macos
           path: tray/usage-guard-tray-macos.dmg
+          archive: false

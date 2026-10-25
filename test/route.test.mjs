@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readOpenRouterSpend, routeJob } from "../src/route.mjs";
 import { GuardStore } from "../src/store.mjs";
+import { buildProviderDecision } from "../src/policy.mjs";
+import { realpathSync } from "node:fs";
+import os from "node:os";
 
 const HOUR = 60 * 60_000;
 const NOW = Date.UTC(2026, 9, 20, 1, 0); // 11:00 Brisbane
@@ -315,4 +318,68 @@ test("Hermes closes when OpenRouter credit is used up, before its daily cap", as
   const keyCapped = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
     fetch: async (url) => (url.endsWith("/credits") ? { ok: false } : reply({ usage_daily: 0, limit_remaining: 0 })) });
   assert.equal(keyCapped.outOfCredit, true);
+});
+
+// Task-fit routing: difficulty sets the rung, quota can only push cheaper.
+const LADDER = {
+  claude: ["claude-opus-5-5/high", "claude-sonnet-5-5/high", "claude-sonnet-5-5/medium", "claude-haiku-5-5/default"],
+  codex: ["gpt-6.1-sol/high", "gpt-6.1-sol/medium", "gpt-6-luna/high", "gpt-6-luna/medium"],
+};
+const pick = (route) => `${route.model}/${route.effort}`;
+const atRung = (route, rung) => {
+  assert.equal(route.rung, rung);
+  assert.equal(pick(route), LADDER[route.lane][rung - 1]);
+};
+const allowed = () => realpathSync(os.tmpdir());
+
+test("easy file-scan picks the cheapest rung", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  atRung(routeJob(store, "file-scan", { now: NOW, difficulty: "easy", payAsYouGo: hermes(9), record: false }), 4);
+});
+
+test("untagged code picks rung 2", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  const route = routeJob(store, "code", { now: NOW, record: false });
+  assert.equal(route.difficulty, "medium");
+  atRung(route, 2);
+});
+
+test("hard code picks rung 1 and never Hermes", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11], config: { hermesRepos: [allowed()] } });
+  const route = routeJob(store, "code", { now: NOW, difficulty: "hard", repo: allowed(), payAsYouGo: hermes(0), record: false });
+  assert.notEqual(route.lane, "hermes");
+  atRung(route, 1);
+  // Even with both subscriptions spent, hard work waits rather than falling back to Hermes.
+  const spent = fixture(t, { claude: [59, 75], codex: [50, 70], config: { hermesRepos: [allowed()] } });
+  assert.equal(routeJob(spent, "code", { now: NOW, difficulty: "hard", repo: allowed(), payAsYouGo: hermes(0), record: false }).lane, "wait");
+});
+
+test("role sensitive keeps easy code off Hermes and at rung 2", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11], config: { hermesRepos: [allowed()] } });
+  const route = routeJob(store, "code", { now: NOW, difficulty: "easy", role: "sensitive", repo: allowed(), payAsYouGo: hermes(0), record: false });
+  assert.notEqual(route.lane, "hermes");
+  atRung(route, 2);
+});
+
+test("failed on a capped lane switches lane, then waits", (t) => {
+  const store = fixture(t, { claude: [69, 70], codex: [69, 70] }); // weekly usable under 30%: quota rung 2
+  assert.equal(routeJob(store, "code", { now: NOW, record: false }).rung, 2);
+  const route = routeJob(store, "code", { now: NOW, failedAttempts: 1, record: false });
+  assert.equal(route.lane, "wait");
+  assert.match(route.reason, /No lane can take a stronger model/);
+});
+
+test("stale lane keeps old model fields", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  const later = NOW + 60 * 60_000;
+  const route = routeJob(store, "code", { now: later, record: false });
+  const claude = route.lanes.find((l) => l.lane === "claude");
+  assert.equal(claude.rung, null);
+  assert.equal(claude.model, buildProviderDecision(store, "claude", { now: later, role: "standard", record: false }).recommendedModel);
+});
+
+test("bad difficulty or role throws TypeError", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  assert.throws(() => routeJob(store, "code", { now: NOW, difficulty: "trivial" }), TypeError);
+  assert.throws(() => routeJob(store, "code", { now: NOW, role: "boss" }), TypeError);
 });

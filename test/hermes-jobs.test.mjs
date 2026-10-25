@@ -66,6 +66,18 @@ test("Hermes job kinds go to Hermes first, only for opted-in repos", (t) => {
   assert.equal(routeJob(store, "plan", { now: NOW, payAsYouGo: hermes, repo, record: false }).lane, "claude");
 });
 
+test("easy code goes to Hermes, hard code does not; Hermes failures hand over at the task rung", (t) => {
+  const repo = tempDir(t, "ug-fit-");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const route = (o) => routeJob(store, "code", { now: NOW, payAsYouGo: hermes, repo, record: false, ...o });
+  assert.equal(route({ difficulty: "easy" }).lane, "hermes");
+  assert.notEqual(route({ difficulty: "hard" }).lane, "hermes");
+  const handedOver = route({ failedAttempts: 2 });
+  assert.ok(["claude", "codex"].includes(handedOver.lane));
+  assert.equal(handedOver.rung, 2);
+  assert.equal(route({ failedAttempts: 3 }).rung, 1);
+});
+
 test("a Hermes job escalates to a subscription after two failed attempts", (t) => {
   const repo = tempDir(t, "ug-esc-");
   const store = storeWith(t, { hermesRepos: [repo] });

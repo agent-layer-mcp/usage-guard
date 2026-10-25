@@ -178,6 +178,8 @@ try {
       payAsYouGo: await readOpenRouterSpend(),
       repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
       failedAttempts: numberOption(args, "--failed") ?? 0,
+      difficulty: stringOption(args, "--difficulty"),
+      role: stringOption(args, "--role"),
     });
     console.log(args.includes("--json") ? JSON.stringify(route, null, 2) : formatRoute(route));
     store.close();
@@ -326,6 +328,7 @@ function formatLadders(config) {
 function formatRoute(route) {
   const lines = [
     `lane: ${route.lane}${route.model ? ` (${route.model}${route.effort ? `, ${route.effort}` : ""})` : ""}`,
+    `difficulty: ${route.difficulty}${route.rung ? `, rung ${route.rung}` : ""}`,
     `reason: ${route.reason}`,
   ];
   if (route.ladder && route.ladder !== "standard") {

@@ -1,46 +1,79 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { guardHome } from "./config.mjs";
+import { TASK_ROLES } from "./model-stepping.mjs";
 import { buildProviderDecision } from "./policy.mjs";
+import { DIFFICULTIES, PROTECTED_ROLES, taskFitRung } from "./task-fit.mjs";
 
-// Small, checkable jobs that go to Hermes first (docs/hermes-jobs.md).
+// Dev work that goes to Hermes first; Claude keeps planning and review (docs/hermes-jobs.md).
 export const HERMES_KINDS = Object.freeze([
-  "lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan",
+  "code", "bulk", "lint-format", "test-write", "test-triage", "doc-update", "rename-mechanical", "file-scan",
 ]);
-export const ROUTE_KINDS = Object.freeze(["code", "review", "plan", "bulk", ...HERMES_KINDS]);
+export const ROUTE_KINDS = Object.freeze(["review", "plan", ...HERMES_KINDS]);
 // Hermes jobs get one retry; after two failed attempts they go to a subscription lane.
 export const HERMES_MAX_ATTEMPTS = 2;
 const OVER_PACE_RATIO = 1.3; // matches the pace protect threshold in policy.mjs
 const ROUTINE_KINDS = new Set(["bulk", "lint-format", "doc-update", "rename-mechanical", "file-scan"]);
 const SUBSCRIPTION_LANES = ["claude", "codex"];
 
-// Pick the lane for the next job. Planning and review stay on Claude while its
-// daily share allows; other work goes to the lane with the most share left today.
+// Pick the lane for the next job. Hermes job kinds go to Hermes first while it is open,
+// ahead of the Codex-first rule. Planning and review stay on Claude while its daily share
+// allows; other work goes to the lane with the most share left today. Each subscription lane's
+// model comes from the task's difficulty, made cheaper (never stronger) by quota.
 export function routeJob(store, kind, options = {}) {
   if (!ROUTE_KINDS.includes(kind)) throw new TypeError(`Route kind must be one of: ${ROUTE_KINDS.join(", ")}.`);
+  // Planning and review default to hard: they keep the strongest model quota allows.
+  const difficulty = options.difficulty ?? (kind === "plan" || kind === "review" ? "hard" : "medium");
+  if (!DIFFICULTIES.includes(difficulty)) throw new TypeError(`Difficulty must be one of: ${DIFFICULTIES.join(", ")}.`);
+  if (options.role != null && !TASK_ROLES.includes(options.role)) throw new TypeError(`Role must be one of: ${TASK_ROLES.join(", ")}.`);
   const now = options.now ?? Date.now();
   const config = options.config || store.getConfig();
   // Off: a passthrough answer so callers fall back to their own rules.
   if (config.enabled === false) {
     return { kind, lane: "off", disabled: true, reason: "Usage Guard is off.", lanes: [], createdAt: now };
   }
-  const role = { review: "review", plan: "planning" }[kind] || (ROUTINE_KINDS.has(kind) ? "routine" : "standard");
-  const lanes = SUBSCRIPTION_LANES.map((provider) => subscriptionLane(
-    buildProviderDecision(store, provider, { now, config, role, record: options.record }), kind,
-  ));
+  const role = { review: "review", plan: "planning" }[kind] || options.role || (ROUTINE_KINDS.has(kind) ? "routine" : "standard");
+  const protectedRole = PROTECTED_ROLES.has(role);
+  // Hard and protected work never go to Hermes, first or as fallback.
+  const noHermes = difficulty === "hard" || protectedRole;
+  const failed = options.failedAttempts ?? 0;
+  if (!Number.isInteger(failed) || failed < 0) throw new TypeError("Failed attempts must be a whole number, 0 or more.");
   // A Hermes job that failed with HTTP 402 closes the lane for the rest of the (local) day.
   const creditClosed = store.getNoticeState("hermes", "credit-closed")?.state === localDay(now);
-  lanes.push(hermesLane(config, creditClosed ? { ...options.payAsYouGo, outOfCredit: true } : options.payAsYouGo));
+  const hermes = hermesLane(config, creditClosed ? { ...options.payAsYouGo, outOfCredit: true } : options.payAsYouGo);
+  // Failures on Hermes don't count against subscription rungs: after two, the subscription starts at the task rung.
+  // A closed Hermes lane took none of the attempts, so every failure counts.
+  const hermesCandidate = HERMES_KINDS.includes(kind) && !noHermes && hermes.available
+    && config.hermesJobKinds.includes(kind) && repoAllowed(options.repo, config.hermesRepos);
+  const subscriptionFailures = hermesCandidate ? Math.max(0, failed - HERMES_MAX_ATTEMPTS) : failed;
+  const fit = { difficulty, protectedRole, subscriptionFailures, config };
+  const lanes = SUBSCRIPTION_LANES.map((provider) => subscriptionLane(
+    buildProviderDecision(store, provider, { now, config, role, record: options.record }), kind, fit,
+  ));
+  lanes.push(hermes);
 
   let choice = null;
   let reason;
   if (config.routingPaused) {
     reason = "Routing is paused; start no new delegated work.";
   } else {
-    const open = lanes.filter((lane) => lane.available);
+    // A retry after a subscription failure needs a stronger model: skip lanes that can't give one, and Hermes.
+    const escalating = subscriptionFailures > 0;
+    const open = lanes.filter((lane) => lane.available && !(escalating && (lane.capped || !lane.subscription)));
     const claude = open.find((lane) => lane.lane === "claude");
+    const hermesJob = HERMES_KINDS.includes(kind);
+    const gate = !hermesJob ? null
+      : noHermes ? { ok: false, reason: "Hard and protected work never goes to Hermes." }
+      : hermesJobGate(kind, config, options);
+    const hermesOpen = open.find((lane) => !lane.subscription) || null;
     const codexFirst = codexFirstRule(kind, config, lanes);
-    if (codexFirst?.applies) {
+    if (codexFirst?.applies && escalating && lanes.find((lane) => lane.lane === "codex").capped) {
+      codexFirst.applies = false;
+    }
+    if (gate?.ok && hermesOpen) {
+      choice = hermesOpen;
+      reason = `${kind} goes to ${laneName(choice.lane)} first while it is under its $${config.payAsYouGoDailyCapUsd} daily cap.`;
+    } else if (codexFirst?.applies) {
       choice = lanes.find((lane) => lane.lane === "codex");
       reason = codexFirst.reason;
     } else if ((kind === "plan" || kind === "review") && claude?.verified) {
@@ -57,9 +90,9 @@ export function routeJob(store, kind, options = {}) {
         || b.remainingTodayPercent - a.remainingTodayPercent)[0] || null;
       const passedOver = subscriptions.find((lane) => lane !== best && lane.overPace && best && !best.overPace
         && lane.remainingTodayPercent > best.remainingTodayPercent);
-      const hermesJob = HERMES_KINDS.includes(kind);
-      const gate = hermesJob ? hermesJobGate(kind, config, options) : null;
-      const payAsYouGo = kind === "plan" || kind === "review" || (gate && !gate.ok) ? null
+      // Code and bulk outside the Hermes-first gate keep the old last-resort use of Hermes.
+      const gateBlocks = noHermes || (gate && !gate.ok && kind !== "code" && kind !== "bulk");
+      const payAsYouGo = kind === "plan" || kind === "review" || gateBlocks ? null
         : open.find((lane) => !lane.subscription) || null;
       // With one subscription spent and the other nearly so, use the capped pay-as-you-go lane before
       // squeezing the last of the other's share (a banked reset is only ever spent by the user).
@@ -70,6 +103,8 @@ export function routeJob(store, kind, options = {}) {
       choice = (gate?.ok && payAsYouGo) || ((nearlyOut || staleRoutine) && payAsYouGo) || best || payAsYouGo;
       reason = gate?.ok && choice && choice === payAsYouGo
         ? `${kind} goes to ${laneName(choice.lane)} first while it is under its $${config.payAsYouGoDailyCapUsd} daily cap.`
+        : !choice && escalating && lanes.some((lane) => lane.subscription && lane.available && lane.capped)
+          ? "No lane can take a stronger model for this task within its quota."
         : !choice ? `No lane has budget for ${kind} work now.${nextShareText(lanes)}`
         : choice.subscription
           ? choice.verified
@@ -88,7 +123,7 @@ export function routeJob(store, kind, options = {}) {
       if ((kind === "plan" || kind === "review") && claude && !claude.verified && choice?.lane === "codex") {
         reason = `Claude has no fresh reading, so ${kind === "plan" ? "planning" : "review"} goes to Codex. ${reason}`;
       }
-      if (gate && !gate.ok && choice) reason = `${gate.reason} ${reason}`;
+      if (gateBlocks && gate && choice) reason = `${gate.reason} ${reason}`;
       if (codexFirst) reason = `${codexFirst.reason} ${reason}`;
     }
   }
@@ -96,6 +131,8 @@ export function routeJob(store, kind, options = {}) {
   const route = {
     kind,
     lane: choice?.lane || "wait",
+    difficulty,
+    rung: choice?.subscription ? choice.rung : null,
     model: choice?.model || null,
     effort: choice?.effort || null,
     command: choice?.command || null,
@@ -119,6 +156,18 @@ export function routeJob(store, kind, options = {}) {
     createdAt: now,
   });
   return route;
+}
+
+export const OUTCOME_LANES = Object.freeze([...SUBSCRIPTION_LANES, "hermes"]);
+
+// Validates and stores one routed task's result (shared by the CLI and MCP).
+export function recordRouteOutcome(store, { lane, model, kind, difficulty = "medium", result, now = Date.now() }) {
+  if (!OUTCOME_LANES.includes(lane)) throw new TypeError(`Lane must be one of: ${OUTCOME_LANES.join(", ")}.`);
+  if (typeof model !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:/~-]{0,127}$/.test(model)) throw new TypeError("Model must be a model ID.");
+  if (!ROUTE_KINDS.includes(kind)) throw new TypeError(`Route kind must be one of: ${ROUTE_KINDS.join(", ")}.`);
+  if (!DIFFICULTIES.includes(difficulty)) throw new TypeError(`Difficulty must be one of: ${DIFFICULTIES.join(", ")}.`);
+  store.recordOutcome({ lane, model, kind, difficulty, result, createdAt: now });
+  return { lane, model, kind, difficulty, result };
 }
 
 // Optional "lean on Codex" rule: code and bulk go to Codex while its weekly room is at or
@@ -158,8 +207,15 @@ export function repoAllowed(repo, allowed) {
   });
 }
 
-function subscriptionLane(decision, kind) {
+function subscriptionLane(decision, kind, fit) {
   const daily = decision.daily;
+  // No quota rung (stale reading, stepping off, quality lock): keep the decision's own models.
+  const quotaRung = ROUTINE_KINDS.has(kind) ? decision.routineRung : decision.quotaRung;
+  const { rung, capped } = quotaRung == null ? { rung: null, capped: false } : taskFitRung({
+    difficulty: fit.difficulty, quotaRung, protectedRole: fit.protectedRole,
+    protectedMaxRung: fit.config.protectedMaxRung, subscriptionFailures: fit.subscriptionFailures,
+  });
+  const fitted = rung == null ? null : fit.config.modelLadders[decision.provider]?.[rung - 1];
   // Uncertain meters never block; such a lane only ranks after lanes with fresh readings.
   const blocked = decision.state === "queue";
   const verified = decision.state !== "missing" && decision.state !== "stale";
@@ -170,8 +226,10 @@ function subscriptionLane(decision, kind) {
     verified,
     available: !blocked && !spent,
     state: decision.state,
-    model: ROUTINE_KINDS.has(kind) ? decision.routineModel : decision.recommendedModel,
-    effort: ROUTINE_KINDS.has(kind) ? decision.routineEffort : decision.recommendedEffort,
+    rung,
+    capped,
+    model: fitted?.model ?? (ROUTINE_KINDS.has(kind) ? decision.routineModel : decision.recommendedModel),
+    effort: fitted?.effort ?? (ROUTINE_KINDS.has(kind) ? decision.routineEffort : decision.recommendedEffort),
     todayBudgetPercent: daily?.todayBudgetPercent ?? null,
     usedTodayPercent: daily?.usedTodayPercent ?? null,
     // Without a daily share (no reset time yet), fall back to usable weekly percent.

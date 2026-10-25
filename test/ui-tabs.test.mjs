@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DEFAULT_TAB, TABS, TAB_KEY, loadTab, normalizeTab, saveTab, tabFromKey, tabsHtml } from "../src/ui/tabs.js";
-import { decisionsHtml, ladderHtml, routeTitle } from "../src/ui/render.js";
+import { decisionsHtml, ladderHtml, outcomeRatesHtml, routeTitle } from "../src/ui/render.js";
 import { dashboardHtml, startDashboard } from "../src/dashboard.mjs";
 import { GuardStore } from "../src/store.mjs";
 
@@ -141,4 +141,11 @@ test("a failed model-list load does not stick over later refreshes", async () =>
   await new Promise((r) => setTimeout(r, 20));
   await panel.refresh();
   assert.equal(el("error").hidden, true, "later successful refresh clears the model error");
+});
+
+test("model results card has an empty state and escapes model names", () => {
+  assert.match(outcomeRatesHtml([]), /No checked results yet\./);
+  const html = outcomeRatesHtml([{ lane: "hermes", model: "x<y", kind: "code", difficulty: "easy", pass: 1, fail: 1, total: 2, rate: 0.5 }]);
+  assert.match(html, /x&lt;y/);
+  assert.match(html, /50%/);
 });

@@ -59,8 +59,23 @@ test("Hermes job kinds go to Hermes first, only for opted-in repos", (t) => {
   const other = routeJob(store, "test-write", { now: NOW, payAsYouGo: hermes, repo: os.tmpdir(), record: false });
   assert.notEqual(other.lane, "hermes");
   assert.match(other.reason, /not in hermesRepos/);
-  // Plain code work keeps the old rule: subscriptions first while they have share.
-  assert.notEqual(routeJob(store, "code", { now: NOW, payAsYouGo: hermes, repo, record: false }).lane, "hermes");
+  // Dev work goes to Hermes too, even with the Codex-first rule on; planning and review stay on Claude.
+  assert.equal(routeJob(store, "code", { now: NOW, payAsYouGo: hermes, repo, record: false }).lane, "hermes");
+  const codexFirst = storeWith(t, { hermesRepos: [repo], codexFirstUntilLeftPercent: 10 });
+  assert.equal(routeJob(codexFirst, "bulk", { now: NOW, payAsYouGo: hermes, repo, record: false }).lane, "hermes");
+  assert.equal(routeJob(store, "plan", { now: NOW, payAsYouGo: hermes, repo, record: false }).lane, "claude");
+});
+
+test("easy code goes to Hermes, hard code does not; Hermes failures hand over at the task rung", (t) => {
+  const repo = tempDir(t, "ug-fit-");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const route = (o) => routeJob(store, "code", { now: NOW, payAsYouGo: hermes, repo, record: false, ...o });
+  assert.equal(route({ difficulty: "easy" }).lane, "hermes");
+  assert.notEqual(route({ difficulty: "hard" }).lane, "hermes");
+  const handedOver = route({ failedAttempts: 2 });
+  assert.ok(["claude", "codex"].includes(handedOver.lane));
+  assert.equal(handedOver.rung, 2);
+  assert.equal(route({ failedAttempts: 3 }).rung, 1);
 });
 
 test("a Hermes job escalates to a subscription after two failed attempts", (t) => {
@@ -173,6 +188,8 @@ test("a Hermes job that OpenRouter refuses for lack of credit is reported as fai
   });
   t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
   assert.equal(summary.ok, false);
+  assert.equal(summary.result, "lane-error");
+  assert.equal(store.outcomeRates(NOW)[0].total, 0); // not the model's fault
   // The lane stays closed for the rest of the day, then reopens.
   const lane = (at) => routeJob(store, "test-write", { now: at, payAsYouGo: hermes, repo, record: false }).lanes.find((l) => l.lane === "hermes");
   assert.equal(lane(NOW + 60_000).available, false);
@@ -277,6 +294,7 @@ test("a hung hermes is killed at the timeout and reported", async (t) => {
   assert.ok(Date.now() - started < 10_000);
   assert.equal(summary.ok, false);
   assert.equal(summary.timedOut, true);
+  assert.equal(summary.result, "lane-error");
   assert.match(formatHermesJob(summary), /timed out and was killed/);
 });
 
@@ -358,4 +376,87 @@ test("symlinks that leave the worktree are refused, ones that stay inside are fi
 test("Hermes env passes proxy and CA settings but no secrets", () => {
   const env = hermesEnv({ HERMES_HOME: "/h", HTTPS_PROXY: "p", https_proxy: "p", NO_PROXY: "n", SSL_CERT_FILE: "c", REQUESTS_CA_BUNDLE: "b", ANTHROPIC_API_KEY: "x", GITHUB_TOKEN: "y" });
   assert.deepEqual(Object.keys(env).sort(), ["HERMES_HOME", "HTTPS_PROXY", "NO_PROXY", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "https_proxy"]);
+});
+
+// --check: the job's own test run decides pass/fail, with Hermes's stripped environment.
+async function jobWithCheck(t, check, { env = {}, setup } = {}) {
+  const repo = fakeRepo(t);
+  setup?.(repo);
+  const home = tempDir(t, "ug-check-");
+  const bin = path.join(home, "fake-hermes");
+  writeFileSync(bin, "#!/bin/sh\necho \"// edit\" >> src/a.js\n");
+  chmodSync(bin, 0o755);
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "Tidy src/a.js\n");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const summary = await runHermesJob(store, {
+    kind: "code", difficulty: "easy", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: bin, check,
+    env: { ...process.env, USAGE_GUARD_HOME: home, ...env },
+  });
+  t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
+  return { summary, store };
+}
+
+test("a passing check records pass", async (t) => {
+  const { summary, store } = await jobWithCheck(t, ["true"]);
+  assert.equal(summary.result, "pass");
+  assert.equal(summary.ok, true);
+  assert.equal(summary.check.exitCode, 0);
+  const [rate] = store.outcomeRates(NOW);
+  assert.deepEqual([rate.lane, rate.kind, rate.difficulty, rate.pass], ["hermes", "code", "easy", 1]);
+});
+
+test("a failing check records fail", async (t) => {
+  const { summary } = await jobWithCheck(t, ["false"]);
+  assert.equal(summary.result, "fail");
+  assert.equal(summary.ok, false);
+});
+
+test("no check records unchecked", async (t) => {
+  const { summary, store } = await jobWithCheck(t, undefined);
+  assert.equal(summary.result, "unchecked");
+  assert.equal(summary.check, null);
+  assert.equal(store.outcomeRates(NOW)[0].total, 0);
+});
+
+test("a missing check command fails the job without throwing", async (t) => {
+  const { summary } = await jobWithCheck(t, ["/no/such/bin"]);
+  assert.equal(summary.result, "fail");
+  assert.ok(existsSync(summary.worktree)); // kept for inspection
+});
+
+test("the check never sees the parent's secrets", async (t) => {
+  const { summary } = await jobWithCheck(t, ["sh", "-c", "test -z \"$ANTHROPIC_API_KEY\""], { env: { ANTHROPIC_API_KEY: "sk-test" } });
+  assert.equal(summary.result, "pass");
+});
+
+test("the check can use the repo's node_modules, and the link is removed after", async (t) => {
+  const setup = (repo) => {
+    spawnSync("mkdir", ["-p", path.join(repo, "node_modules", "x")]);
+    writeFileSync(path.join(repo, "node_modules", "x", "index.js"), "module.exports = 1;\n");
+  };
+  const { summary } = await jobWithCheck(t, ["test", "-e", "node_modules/x/index.js"], { setup });
+  assert.equal(summary.result, "pass");
+  assert.equal(existsSync(path.join(summary.worktree, "node_modules")), false);
+});
+
+test("a hermes binary that cannot start is a lane error, not a model failure", async (t) => {
+  const repo = fakeRepo(t);
+  const home = tempDir(t, "ug-nobin-");
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "Tidy src/a.js\n");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const summary = await runHermesJob(store, {
+    kind: "code", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: "/no/such/hermes",
+    env: { ...process.env, USAGE_GUARD_HOME: home },
+  });
+  t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
+  assert.equal(summary.result, "lane-error");
+});
+
+test("with Hermes closed, a retry escalates on the first failure", (t) => {
+  const repo = tempDir(t, "ug-closed-");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const route = routeJob(store, "code", { now: NOW, difficulty: "easy", repo, failedAttempts: 1, record: false }); // no OpenRouter key
+  assert.equal(route.rung, 3);
 });

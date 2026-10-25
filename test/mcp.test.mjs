@@ -91,3 +91,26 @@ test("MCP status and decision accept a role without storing task text", async ()
   assert.doesNotMatch(JSON.stringify(response.structuredContent.recentDecisions), /secret plan/i);
   store.close();
 });
+
+test("MCP routes a task by difficulty and records its outcome", async (t) => {
+  const store = new GuardStore({ filename: ":memory:" });
+  t.after(() => store.close());
+  const options = { readSpend: async () => ({ configured: false }) };
+  const tools = await handleRequest(store, { method: "tools/list" });
+  for (const name of ["usage_guard_route", "usage_guard_outcome"]) assert.ok(tools.tools.some((tool) => tool.name === name), name);
+
+  const route = await handleRequest(store, { method: "tools/call", params: { name: "usage_guard_route", arguments: { kind: "file-scan", difficulty: "easy" } } }, options);
+  assert.equal(route.isError, false);
+  assert.equal(route.structuredContent.difficulty, "easy");
+  assert.ok(route.structuredContent.lane);
+
+  const saved = await handleRequest(store, { method: "tools/call", params: { name: "usage_guard_outcome",
+    arguments: { lane: "claude", model: "claude-haiku-5-5", kind: "file-scan", difficulty: "easy", result: "pass" } } }, options);
+  assert.equal(saved.isError, false);
+  assert.equal(store.outcomeRates()[0].pass, 1);
+
+  const bad = await handleRequest(store, { method: "tools/call", params: { name: "usage_guard_outcome",
+    arguments: { lane: "claude", model: "claude-haiku-5-5", kind: "file-scan", difficulty: "trivial", result: "pass" } } }, options);
+  assert.equal(bad.isError, true);
+  assert.match(bad.content[0].text, /Difficulty must be one of/);
+});

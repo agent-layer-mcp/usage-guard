@@ -1,8 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { guardHome } from "./config.mjs";
 import { HERMES_KINDS, HERMES_MAX_ATTEMPTS, localDay, repoAllowed, routeJob } from "./route.mjs";
+import { runTests } from "./test-run.mjs";
 
 // Topics that never go to a third-party lane (docs/hermes-jobs.md, "Never to Hermes").
 // Matched on normalised text (see normaliseTask), so these are lowercase word stems.
@@ -79,7 +80,7 @@ export function findSecretFiles(root) {
 }
 
 // Run one Hermes job in a scratch worktree of `repo`. Refuses unless every rule passes.
-export async function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, payAsYouGo, env = process.env, now = Date.now(), hermesBin = "hermes", timeoutMs = DEFAULT_TIMEOUT_MS }) {
+export async function runHermesJob(store, { kind, taskFile, repo, failedAttempts = 0, payAsYouGo, env = process.env, now = Date.now(), hermesBin = "hermes", timeoutMs = DEFAULT_TIMEOUT_MS, check, difficulty }) {
   const task = readFileSync(taskFile, "utf8").trim();
   if (!task) throw new HermesJobRefused("The task file is empty.");
   checkTask(kind, task);
@@ -88,7 +89,7 @@ export async function runHermesJob(store, { kind, taskFile, repo, failedAttempts
   if (!repoAllowed(repoRoot, config.hermesRepos)) {
     throw new HermesJobRefused(`${repoRoot} is not in hermesRepos. Opt it in with \`usage-guard config hermesRepos '["${repoRoot}"]'\`.`);
   }
-  const route = routeJob(store, kind, { now, config, payAsYouGo, repo: repoRoot, failedAttempts });
+  const route = routeJob(store, kind, { now, config, payAsYouGo, repo: repoRoot, failedAttempts, difficulty });
   if (route.lane !== "hermes") {
     throw new HermesJobRefused(`Route says ${route.lane}, not hermes: ${route.reason}`);
   }
@@ -127,10 +128,18 @@ export async function runHermesJob(store, { kind, taskFile, repo, failedAttempts
   // Conservative: a 402 on stderr, or a failed exit with OpenRouter's own credits wording. Task output that merely mentions "HTTP 402" does not count.
   const noCredit = /HTTP 402/.test(result.stderr) || (result.status !== 0 && /OpenRouter reported that billing, credits/.test(`${result.stdout}${result.stderr}`));
   if (noCredit) store.setNoticeState("hermes", "credit-closed", localDay(now), now);
+  // Hermes can exit 0 after OpenRouter refuses the turn for lack of credit.
+  const hermesOk = !result.error && result.status === 0 && !noCredit;
+  const checkRun = hermesOk && check?.length ? runCheck(check, repoRoot, worktree, env) : null;
+  // A timeout, no credit or a Hermes that could not start is the lane's problem, not the model's;
+  // only a real check counts as pass.
+  const outcome = result.error || noCredit ? "lane-error" : !hermesOk ? "fail" : !checkRun ? "unchecked" : checkRun.exitCode === 0 ? "pass" : "fail";
+  store.recordOutcome({ lane: "hermes", model: config.hermesModel, kind, difficulty: route.difficulty, result: outcome, createdAt: now });
   const summary = {
     kind,
-    // Hermes can exit 0 after OpenRouter refuses the turn for lack of credit.
-    ok: !result.error && result.status === 0 && !noCredit,
+    ok: outcome === "pass" || outcome === "unchecked",
+    result: outcome,
+    check: checkRun,
     timedOut,
     exitCode: result.status ?? null,
     model: config.hermesModel,
@@ -138,13 +147,31 @@ export async function runHermesJob(store, { kind, taskFile, repo, failedAttempts
     worktree,
     logFile,
     diffStat,
-    next: diffStat
+    next: checkRun && diffStat ? "Have Claude review the diff before applying it."
+      : diffStat
       ? "Run the job's check (lint, type check or tests) in the worktree, then have Claude review the diff before applying it."
       : "Hermes made no file changes.",
     retry: `If the check fails, rerun with --failed ${failedAttempts + 1}; after ${HERMES_MAX_ATTEMPTS} failed attempts the route escalates to Claude or Codex.`,
   };
   writeFileSync(path.join(jobDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
   return summary;
+}
+
+// Runs the job's check in the worktree with Hermes's stripped environment, so model-written code never sees secrets.
+// The worktree has committed files only, so the repo's node_modules is linked in for the check and removed after.
+function runCheck(check, repoRoot, worktree, env) {
+  const modules = path.join(repoRoot, "node_modules");
+  const link = path.join(worktree, "node_modules");
+  const linked = existsSync(modules) && !existsSync(link);
+  if (linked) symlinkSync(modules, link, "dir");
+  try {
+    const run = runTests(check, { cwd: worktree, env: hermesEnv(env) });
+    return { exitCode: run.exitCode, logFile: run.logFile };
+  } catch (error) {
+    return { exitCode: null, logFile: null, error: error.message }; // e.g. the check command is missing
+  } finally {
+    if (linked) rmSync(link, { force: true });
+  }
 }
 
 // Hermes gets its own process group (POSIX) so a timeout kills the tools it started too, not just the direct child.
@@ -174,8 +201,10 @@ function runHermes(bin, args, { cwd, env, timeoutMs }) {
 
 export function formatHermesJob(summary) {
   return [
-    `${summary.ok ? "Done" : summary.timedOut ? "Hermes timed out and was killed" : "Hermes failed"} (${summary.kind}, ${summary.model}, attempt ${summary.attempt})`,
+    `${{ pass: "Check passed", unchecked: "Done, not checked" }[summary.result]
+      || (summary.check ? "Check failed" : summary.timedOut ? "Hermes timed out and was killed" : "Hermes failed")} (${summary.kind}, ${summary.model}, attempt ${summary.attempt})`,
     `Worktree: ${summary.worktree}`,
+    ...(summary.check ? [`Check log: ${summary.check.logFile ?? summary.check.error}`] : []),
     summary.diffStat ? `Changes:\n${summary.diffStat}` : "Changes: none",
     `Full log: ${summary.logFile}`,
     summary.next,

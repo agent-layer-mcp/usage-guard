@@ -1,7 +1,7 @@
 // The whole Usage Guard panel (tabs, screens, behaviour), shared by the tray and the dashboard.
 // The host supplies an `api` adapter, so this file never knows whether it runs in Tauri or a browser.
 import { parseCap } from "./format.js";
-import { PRIVACY, decisionsHtml, esc, ladderHtml, laneHtml, modelOptionsHtml, payAsYouGoHtml, recommendationsHtml, routeTitle } from "./render.js";
+import { PRIVACY, decisionsHtml, esc, outcomeRatesHtml, ladderHtml, laneHtml, modelOptionsHtml, payAsYouGoHtml, recommendationsHtml, routeTitle } from "./render.js";
 import { initTabs, panelsHtml, tabsHtml } from "./tabs.js";
 
 const bannersHtml = `<p class="banner error" id="error" role="alert" hidden></p>
@@ -58,6 +58,7 @@ const SCREENS = {
   history: () => `
     <p class="overnight" id="overnight" hidden></p>
     <section class="card"><div class="card-head"><h2>Recent decisions</h2></div><ol id="decisions" class="decisions"></ol></section>
+    <section class="card"><div class="card-head"><h2>Model results, last 14 days</h2></div><ol id="outcomes" class="decisions"></ol></section>
     <section class="card banked">
       <h2>Codex banked reset</h2>
       <p class="caption">Usage Guard never spends this · the button opens Codex's usage page so you can choose to</p>
@@ -135,6 +136,7 @@ export function mountPanel({ api, root = document, wide = false, decisionLimit =
       $("overnight").hidden = !status.overnightSummary;
       $("decisions").innerHTML = decisionsHtml(status.recentDecisions, decisionLimit)
         || `<li class="empty">Waiting for the first decision. Quota events will appear here.</li>`;
+      if ($("outcomes")) $("outcomes").innerHTML = outcomeRatesHtml(status.outcomeRates);
       if (root.activeElement !== $("cap")) $("cap").value = config.payAsYouGoDailyCapUsd;
       onData?.(status, route, on);
     } catch (error) {

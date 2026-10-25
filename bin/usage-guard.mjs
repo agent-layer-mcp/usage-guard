@@ -31,7 +31,7 @@ import {
   syncCodex,
 } from "../src/service.mjs";
 import { GuardStore } from "../src/store.mjs";
-import { readOpenRouterSpend, routeJob } from "../src/route.mjs";
+import { readOpenRouterSpend, recordRouteOutcome, routeJob } from "../src/route.mjs";
 import { formatHermesJob, HermesJobRefused, runHermesJob } from "../src/hermes-job.mjs";
 import { formatTestRun, runTests } from "../src/test-run.mjs";
 import { runSetup, SetupCancelled, writeOpenRouterKey } from "../src/setup.mjs";
@@ -178,10 +178,22 @@ try {
       payAsYouGo: await readOpenRouterSpend(),
       repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
       failedAttempts: numberOption(args, "--failed") ?? 0,
+      difficulty: stringOption(args, "--difficulty"),
+      role: stringOption(args, "--role"),
     });
     console.log(args.includes("--json") ? JSON.stringify(route, null, 2) : formatRoute(route));
     store.close();
     if (route.disabled) process.exitCode = 3; // Callers fall back to their own rules.
+  } else if (command === "outcome") {
+    const saved = recordRouteOutcome(store, {
+      lane: stringOption(args, "--lane"),
+      model: stringOption(args, "--model"),
+      kind: stringOption(args, "--kind"),
+      difficulty: stringOption(args, "--difficulty"),
+      result: stringOption(args, "--result"),
+    });
+    console.log(`Recorded ${saved.result} for ${saved.model} (${saved.lane}, ${saved.kind}, ${saved.difficulty}).`);
+    store.close();
   } else if (command === "test-run") {
     const split = args.indexOf("--");
     const run = runTests(split >= 0 ? args.slice(split + 1) : []);
@@ -199,6 +211,9 @@ try {
         repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
         failedAttempts: numberOption(args, "--failed") ?? 0,
         payAsYouGo: await readOpenRouterSpend(),
+        difficulty: stringOption(args, "--difficulty"),
+        // shortcut: split on spaces, so no quoted arguments; wrap complex checks in a script.
+        check: stringOption(args, "--check")?.trim().split(/\s+/).filter(Boolean),
       });
       console.log(args.includes("--json") ? JSON.stringify(summary, null, 2) : formatHermesJob(summary));
       if (!summary.ok) process.exitCode = 1;
@@ -326,6 +341,7 @@ function formatLadders(config) {
 function formatRoute(route) {
   const lines = [
     `lane: ${route.lane}${route.model ? ` (${route.model}${route.effort ? `, ${route.effort}` : ""})` : ""}`,
+    `difficulty: ${route.difficulty}${route.rung ? `, rung ${route.rung}` : ""}`,
     `reason: ${route.reason}`,
   ];
   if (route.ladder && route.ladder !== "standard") {
@@ -627,11 +643,14 @@ Commands:
   enable | disable              Master switch: hooks, monitor and routing on or off
   route [--kind code|review|plan|bulk] [--json] [--claude-used <pct> (--claude-reset <iso> | --claude-hours <h>) [--claude-5h <pct>]]
                                 Pick the lane (Claude, Codex, Hermes/OpenRouter) for the next job
-                                Hermes kinds: lint-format test-write test-triage doc-update rename-mechanical file-scan
-                                [--repo <path>] [--failed <n>] (n failed Hermes attempts; 2 escalates)
+                                Hermes kinds: code bulk lint-format test-write test-triage doc-update rename-mechanical file-scan
+                                [--repo <path>] [--failed <n>] (n failed attempts; 2 on Hermes escalates)
+                                [--difficulty easy|medium|hard] [--role planning|architecture|review|sensitive|routine|standard]
+  outcome --lane <lane> --model <id> --kind <kind> [--difficulty <d>] --result pass|fail|unchecked|lane-error
+                                Record how a routed task went (no task text is stored)
   test-run [--json] -- <command>
                                 Run tests with no model; print only failures, keep the full log
-  hermes-job --kind <type> --task-file <file> [--repo <path>] [--failed <n>] [--json]
+  hermes-job --kind <type> --task-file <file> [--repo <path>] [--failed <n>] [--difficulty <d>] [--check "<test command>"] [--json]
                                 Run one Hermes job in a scratch worktree, if every rule allows it
   monitor [--once] [--provider claude|codex|all]
                                 Monitor usage and show desktop alerts (macOS, Linux)

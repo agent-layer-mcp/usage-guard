@@ -74,6 +74,14 @@ export function routeTitle(route) {
 export const ladderHtml = (ladders = {}) => Object.entries(ladders).map(([lane, rungs]) =>
   `<div class="ladder lane-${esc(lane)}"><span class="lane-name"><i class="lane-dot"></i>${esc(NAMES[lane] || lane)}</span><ol class="rungs">${rungs.map((r) => `<li>${esc(r.model)} <small>${esc(r.effort)}</small></li>`).join("")}</ol></div>`).join("");
 
+// Success rate per model and task type; only checked results count.
+export function outcomeRatesHtml(rows = []) {
+  const checked = rows.filter((row) => row.rate != null).sort((a, b) => a.rate - b.rate);
+  if (!checked.length) return `<li class="empty">No checked results yet.</li>`;
+  return checked.map((row) =>
+    `<li><span class="who lane-${esc(row.lane)}"><i class="lane-dot"></i>${esc(row.model)}</span><span class="act">${esc(row.kind)} · ${esc(row.difficulty)}</span><span class="why">${Math.round(row.rate * 100)}% pass of ${row.total}</span></li>`).join("");
+}
+
 // Back-to-back identical decisions collapse into one line with a count, so repeats don't crowd out the rest.
 export function decisionsHtml(decisions = [], limit = 6) {
   const runs = [];

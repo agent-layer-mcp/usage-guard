@@ -1,4 +1,5 @@
-const PROTECTED_ROLES = new Set(["planning", "architecture", "review", "sensitive"]);
+import { PROTECTED_ROLES } from "./task-fit.mjs";
+
 export const TASK_ROLES = ["planning", "architecture", "review", "sensitive", "routine", "standard"];
 
 // Only the role label leaves this function; descriptions never enter state/logs.

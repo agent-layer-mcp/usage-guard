@@ -154,6 +154,18 @@ export function routeJob(store, kind, options = {}) {
   return route;
 }
 
+export const OUTCOME_LANES = Object.freeze([...SUBSCRIPTION_LANES, "hermes"]);
+
+// Validates and stores one routed task's result (shared by the CLI and MCP).
+export function recordRouteOutcome(store, { lane, model, kind, difficulty = "medium", result, now = Date.now() }) {
+  if (!OUTCOME_LANES.includes(lane)) throw new TypeError(`Lane must be one of: ${OUTCOME_LANES.join(", ")}.`);
+  if (typeof model !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._:/~-]{0,127}$/.test(model)) throw new TypeError("Model must be a model ID.");
+  if (!ROUTE_KINDS.includes(kind)) throw new TypeError(`Route kind must be one of: ${ROUTE_KINDS.join(", ")}.`);
+  if (!DIFFICULTIES.includes(difficulty)) throw new TypeError(`Difficulty must be one of: ${DIFFICULTIES.join(", ")}.`);
+  store.recordOutcome({ lane, model, kind, difficulty, result, createdAt: now });
+  return { lane, model, kind, difficulty, result };
+}
+
 // Optional "lean on Codex" rule: code and bulk go to Codex while its weekly room is at or
 // above codexFirstUntilLeftPercent, ignoring Codex's daily share. Only a fresh reading counts.
 function codexFirstRule(kind, config, lanes) {

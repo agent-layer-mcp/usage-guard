@@ -1,0 +1,43 @@
+name: Mac tray
+
+# Builds the tray as one universal (Apple Silicon + Intel) .dmg. On a published
+# release it is attached as usage-guard-tray-macos.dmg; a manual run keeps it as
+# a workflow artifact. The app is unsigned: right-click > Open on first launch.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac-tray:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: tray
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tray
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --global @tauri-apps/cli@2
+      - run: tauri build --target universal-apple-darwin --bundles dmg
+      - name: Give the .dmg a stable name
+        run: cp target/universal-apple-darwin/release/bundle/dmg/*.dmg usage-guard-tray-macos.dmg
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" usage-guard-tray-macos.dmg --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: usage-guard-tray-macos
+          path: tray/usage-guard-tray-macos.dmg

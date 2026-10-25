@@ -34,11 +34,13 @@ if [[ -d "$root/app" && ! -L "$root/app" ]]; then
   ln -sfn "$legacy" "$root/app.prev"
 fi
 old="$(readlink "$root/app" 2>/dev/null || true)"
+# rename(2) via node: macOS mv has no -T, and plain mv would move into the linked dir.
+swap() { node -e 'require("fs").renameSync(process.argv[1], process.argv[2])' "$1" "$2"; }
 ln -sfn "$release" "$root/app.tmp"
-mv -T "$root/app.tmp" "$root/app"
+swap "$root/app.tmp" "$root/app"
 if [[ -n "$old" && "$old" != "$release" ]]; then
   ln -sfn "$old" "$root/app.prev.tmp"
-  mv -T "$root/app.prev.tmp" "$root/app.prev"
+  swap "$root/app.prev.tmp" "$root/app.prev"
 fi
 # Keep only the live and previous releases.
 keep_a="$(readlink "$root/app")"; keep_b="$(readlink "$root/app.prev" 2>/dev/null || true)"
@@ -54,5 +56,7 @@ fi
 # The server keeps old code in memory until restarted.
 if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet usage-guard-serve 2>/dev/null; then
   systemctl --user restart usage-guard-serve || echo "warning: could not restart usage-guard-serve" >&2
+elif [[ "$(uname)" == Darwin ]] && launchctl print "gui/$(id -u)/sh.agentlayer.usage-guard.serve" >/dev/null 2>&1; then
+  launchctl kickstart -k "gui/$(id -u)/sh.agentlayer.usage-guard.serve" || echo "warning: could not restart the serve service" >&2
 fi
 echo "Installed Usage Guard $version at $root/app (previous copy: $root/app.prev)"

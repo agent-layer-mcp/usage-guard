@@ -303,12 +303,13 @@ test("a timeout kills Hermes's whole process group, grandchildren included", asy
   const home = tempDir(t, "ug-pgroup-");
   const bin = path.join(home, "fake-hermes");
   const pids = path.join(home, "pids");
+  // 3s timeout: a loaded machine (full suite on a Mac) can take over 0.5s to start the script.
   writeFileSync(bin, `#!/bin/sh\nsleep 30 &\necho "$! $$" > ${pids}\nsleep 30\n`);
   chmodSync(bin, 0o755);
   const taskFile = path.join(home, "task.txt");
   writeFileSync(taskFile, "fix lint errors in src\n");
   const summary = await runHermesJob(storeWith(t, { hermesRepos: [repo] }), {
-    kind: "lint-format", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: bin, timeoutMs: 500,
+    kind: "lint-format", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: bin, timeoutMs: 3000,
     env: { ...process.env, USAGE_GUARD_HOME: home },
   });
   t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));

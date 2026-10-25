@@ -72,6 +72,12 @@ lane `route` picks for `code`, with the Hermes attempt attached as context.
 `test-triage` verdicts of `code-bug` or `unclear` always go to Claude or Codex;
 Hermes never fixes product code found broken by a test.
 
+`hermes-job --check "<test command>"` runs the check in the scratch worktree
+after Hermes finishes, with the same stripped environment Hermes gets and the
+repo's `node_modules` linked in for the check only. The job records its result:
+`pass`, `fail`, `unchecked` (no check given) or `lane-error` (timeout, no
+credit; not the model's fault). Only pass and fail count in success rates.
+
 ### Review rule
 
 Every test diff Hermes produces (`test-write`, `test-triage` fixes,

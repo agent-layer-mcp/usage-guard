@@ -358,12 +358,28 @@ the next job:
   `--repo <path>` (default: the current folder) and `--failed <n>`; after two
   failed Hermes attempts the job escalates to Claude or Codex. See
   [docs/hermes-jobs.md](docs/hermes-jobs.md).
+- Task fit: `--difficulty easy|medium|hard` (default `medium`) sets the model
+  rung on Claude and Codex: hard = rung 1, medium = rung 2, easy = rung 4 (Haiku
+  5.5, gpt-6-luna). Quota can only make the pick cheaper. Pass `--role` for
+  protected work (planning, architecture, review, sensitive): it stays at rung 2
+  or stronger and, like `hard`, never goes to Hermes. Each failed attempt after
+  Hermes moves one rung stronger, never past what quota allows; a lane that
+  can't go stronger is skipped, then the route waits. The MCP tool
+  `usage_guard_route` takes the same inputs.
+- `usage-guard outcome --lane <lane> --model <id> --kind <kind> --difficulty <d>
+  --result pass|fail|unchecked|lane-error` (or `usage_guard_outcome`) records
+  how a routed task went; no task text is stored. `status` and the History tab
+  show pass rates per model and task type for the last 14 days.
 - `usage-guard hermes-job --kind <type> --task-file <file> --repo <path>` runs one
   such job: it refuses planning and review, tasks that mention secrets, auth,
   billing, children, Godot or demos, repos not opted in, and repos with committed
   secret-like files. It runs `hermes` in a scratch worktree of committed files
   under `~/.usage-guard/jobs/`, keeps the full log there and prints a short
   summary. Nothing is applied to the repo; review the worktree diff first.
+  `--check "<test command>"` runs the check in the worktree afterwards, with
+  Hermes's stripped environment and the repo's `node_modules` linked in, and
+  records the result (`pass`, `fail`, `unchecked`, or `lane-error` for a timeout
+  or no credit).
 - `usage-guard test-run -- <command>` runs a test suite with no model, saves the
   full log in `~/.usage-guard/test-runs/` and prints only failing test names and
   short errors. It exits with the suite's exit code.

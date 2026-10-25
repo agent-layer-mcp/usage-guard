@@ -165,6 +165,7 @@ function switchingInstructions(decision, recommendation) {
   return `Model stepping is on and already authorized: use ${model} with ${effort} effort for new ${recommendation.taskRole} work. `
     + `Use ${routineModel} with ${routineEffort} effort for routine subagents only. `
     + "Planning, architecture, finished-work reviews, and money, security, children's data or production work must use the protected main-thread recommendation (never below rung 2). Recheck usage_guard_decision with that role before delegation. "
+    + "Before delegating, tag each sub-task easy, medium or hard and get its model from usage_guard_route (or `usage-guard route --kind <kind> --difficulty <d>`); pass role for protected work; after its check, report the result with usage_guard_outcome. "
     + "Finish the current edit and its checks before switching; switch only between tasks. "
     + (decision.provider === "claude"
       ? "In Claude Desktop, when available, use mcp__ccd_session_mgmt__set_session_model and mcp__ccd_session_mgmt__set_session_effort with their declared schemas for this session. Claude Code needs version 2.1.284 or newer for this default ladder. "

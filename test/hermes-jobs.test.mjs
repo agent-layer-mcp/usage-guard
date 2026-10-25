@@ -374,3 +374,65 @@ test("Hermes env passes proxy and CA settings but no secrets", () => {
   const env = hermesEnv({ HERMES_HOME: "/h", HTTPS_PROXY: "p", https_proxy: "p", NO_PROXY: "n", SSL_CERT_FILE: "c", REQUESTS_CA_BUNDLE: "b", ANTHROPIC_API_KEY: "x", GITHUB_TOKEN: "y" });
   assert.deepEqual(Object.keys(env).sort(), ["HERMES_HOME", "HTTPS_PROXY", "NO_PROXY", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "https_proxy"]);
 });
+
+// --check: the job's own test run decides pass/fail, with Hermes's stripped environment.
+async function jobWithCheck(t, check, { env = {}, setup } = {}) {
+  const repo = fakeRepo(t);
+  setup?.(repo);
+  const home = tempDir(t, "ug-check-");
+  const bin = path.join(home, "fake-hermes");
+  writeFileSync(bin, "#!/bin/sh\necho \"// edit\" >> src/a.js\n");
+  chmodSync(bin, 0o755);
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "Tidy src/a.js\n");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const summary = await runHermesJob(store, {
+    kind: "code", difficulty: "easy", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: bin, check,
+    env: { ...process.env, USAGE_GUARD_HOME: home, ...env },
+  });
+  t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
+  return { summary, store };
+}
+
+test("a passing check records pass", async (t) => {
+  const { summary, store } = await jobWithCheck(t, ["true"]);
+  assert.equal(summary.result, "pass");
+  assert.equal(summary.ok, true);
+  assert.equal(summary.check.exitCode, 0);
+  const [rate] = store.outcomeRates(NOW);
+  assert.deepEqual([rate.lane, rate.kind, rate.difficulty, rate.pass], ["hermes", "code", "easy", 1]);
+});
+
+test("a failing check records fail", async (t) => {
+  const { summary } = await jobWithCheck(t, ["false"]);
+  assert.equal(summary.result, "fail");
+  assert.equal(summary.ok, false);
+});
+
+test("no check records unchecked", async (t) => {
+  const { summary, store } = await jobWithCheck(t, undefined);
+  assert.equal(summary.result, "unchecked");
+  assert.equal(summary.check, null);
+  assert.equal(store.outcomeRates(NOW)[0].total, 0);
+});
+
+test("a missing check command fails the job without throwing", async (t) => {
+  const { summary } = await jobWithCheck(t, ["/no/such/bin"]);
+  assert.equal(summary.result, "fail");
+  assert.ok(existsSync(summary.worktree)); // kept for inspection
+});
+
+test("the check never sees the parent's secrets", async (t) => {
+  const { summary } = await jobWithCheck(t, ["sh", "-c", "test -z \"$ANTHROPIC_API_KEY\""], { env: { ANTHROPIC_API_KEY: "sk-test" } });
+  assert.equal(summary.result, "pass");
+});
+
+test("the check can use the repo's node_modules, and the link is removed after", async (t) => {
+  const setup = (repo) => {
+    spawnSync("mkdir", ["-p", path.join(repo, "node_modules", "x")]);
+    writeFileSync(path.join(repo, "node_modules", "x", "index.js"), "module.exports = 1;\n");
+  };
+  const { summary } = await jobWithCheck(t, ["test", "-e", "node_modules/x/index.js"], { setup });
+  assert.equal(summary.result, "pass");
+  assert.equal(existsSync(path.join(summary.worktree, "node_modules")), false);
+});

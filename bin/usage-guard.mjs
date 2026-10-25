@@ -211,6 +211,9 @@ try {
         repo: path.resolve(stringOption(args, "--repo") || process.cwd()),
         failedAttempts: numberOption(args, "--failed") ?? 0,
         payAsYouGo: await readOpenRouterSpend(),
+        difficulty: stringOption(args, "--difficulty"),
+        // shortcut: split on spaces, so no quoted arguments; wrap complex checks in a script.
+        check: stringOption(args, "--check")?.trim().split(/\s+/).filter(Boolean),
       });
       console.log(args.includes("--json") ? JSON.stringify(summary, null, 2) : formatHermesJob(summary));
       if (!summary.ok) process.exitCode = 1;
@@ -647,7 +650,7 @@ Commands:
                                 Record how a routed task went (no task text is stored)
   test-run [--json] -- <command>
                                 Run tests with no model; print only failures, keep the full log
-  hermes-job --kind <type> --task-file <file> [--repo <path>] [--failed <n>] [--json]
+  hermes-job --kind <type> --task-file <file> [--repo <path>] [--failed <n>] [--difficulty <d>] [--check "<test command>"] [--json]
                                 Run one Hermes job in a scratch worktree, if every rule allows it
   monitor [--once] [--provider claude|codex|all]
                                 Monitor usage and show desktop alerts (macOS, Linux)

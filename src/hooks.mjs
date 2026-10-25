@@ -1,4 +1,7 @@
+import { classifyRole } from "./model-stepping.mjs";
 import { formatStatusLine } from "./presentation.mjs";
+import { readOpenRouterSpend, routeJob } from "./route.mjs";
+import { PROTECTED_ROLES } from "./task-fit.mjs";
 import { readScreenshotMemoryStatus } from "./screenshot-proxy.mjs";
 import { providerDecision, syncClaude, syncCodex } from "./service.mjs";
 import {
@@ -111,6 +114,8 @@ export async function runProviderHook(store, provider, input, options = {}) {
         stopReason: reason,
       };
     }
+    const nudge = provider === "claude" ? await hermesNudge(store, input, noticeSurface, options) : null;
+    if (nudge) return nudge;
     if (stepping) {
       // A tool call may be in the middle of an edit. Tell the agent what to do
       // at the next task boundary; only UserPromptSubmit carries switch advice.
@@ -269,4 +274,40 @@ function reserveHandover(store, decision, options) {
 
 function removeUndefined(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
+}
+
+// Sub-agent types that write code; read-only and specialist agents are left alone.
+const CODE_AGENT_TYPES = new Set([undefined, "", "general-purpose", "claude"]);
+const NUDGE_MINUTES = 30;
+
+// When Claude starts a general sub-agent for work Hermes could take, stop it once and point at the
+// Hermes tool. A retry within NUDGE_MINUTES goes through, so hard or protected work is never stuck.
+async function hermesNudge(store, input, noticeSurface, options) {
+  const toolName = input.tool_name || input.toolName;
+  if (toolName !== "Agent" && toolName !== "Task") return null;
+  const toolInput = input.tool_input || input.toolInput || {};
+  if (!CODE_AGENT_TYPES.has(toolInput.subagent_type)) return null;
+  // Only the role label is kept; the sub-agent's prompt is classified in memory and never stored.
+  if (PROTECTED_ROLES.has(classifyRole(`${toolInput.description || ""} ${toolInput.prompt || ""}`))) return null;
+  const surface = `${noticeSurface}:hermes-nudge`;
+  const last = store.getNoticeState("claude", surface);
+  if (last && Date.now() - last.updatedAt < NUDGE_MINUTES * 60_000) return null;
+  let route;
+  try {
+    route = routeJob(store, "code", {
+      record: false, repo: input.cwd || process.cwd(),
+      payAsYouGo: await (options.readSpend || readOpenRouterSpend)(),
+    });
+  } catch {
+    return null; // Routing trouble must never block the agent.
+  }
+  if (route.lane !== "hermes") return null;
+  store.setNoticeState("claude", surface, "nudged");
+  const reason = "Usage Guard: Hermes (OpenRouter) is open for this kind of work and costs no Claude quota. "
+    + "If the task is easy or medium and touches no secrets, auth, billing or children's data, run it with "
+    + "usage_guard_hermes_job (kind, full task text, repo, check command), then review the diff it returns before applying it. "
+    + "If the task is hard or protected, start this sub-agent again; it will go through.";
+  return {
+    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason },
+  };
 }

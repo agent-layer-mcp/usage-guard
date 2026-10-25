@@ -473,3 +473,45 @@ test("a spent daily share never asks or denies, even with quality lock on", asyn
   assert.match(output.systemMessage, /Today's share of weekly is spent/);
   store.close();
 });
+
+// Nudge: a Claude sub-agent for work Hermes could take is stopped once, pointing at the Hermes tool.
+function nudgeStore(t, config = {}) {
+  const now = Date.now();
+  const repo = mkdtempSync(path.join(os.tmpdir(), "ug-nudge-"));
+  const store = new GuardStore({ filename: ":memory:" });
+  store.setConfig({ qualityLock: true, hermesRepos: [repo], ...config });
+  store.saveSnapshot({
+    provider: "claude", source: "test", observedAt: now,
+    windows: [{ key: "five-hour", label: "5 hour", usedPercent: 12, windowMinutes: 300, resetsAt: now + 240 * 60_000 }],
+  });
+  t.after(() => store.close());
+  return { store, repo };
+}
+const agentCall = (repo, toolInput, session = "nudge") => ({
+  hook_event_name: "PreToolUse", session_id: session, tool_name: "Agent", cwd: repo,
+  tool_input: { description: "Build export", subagent_type: "general-purpose", ...toolInput },
+});
+const open = { claudeDesktop: { platform: "none" }, readSpend: async () => ({ configured: true, spentTodayUsd: 0 }) };
+
+test("a Claude sub-agent for Hermes-eligible work is nudged to Hermes once", async (t) => {
+  const { store, repo } = nudgeStore(t);
+  const first = await runProviderHook(store, "claude", agentCall(repo, { prompt: "Add a CSV export to the reports page" }), open);
+  assert.equal(first.hookSpecificOutput?.permissionDecision, "deny");
+  assert.match(first.hookSpecificOutput.permissionDecisionReason, /usage_guard_hermes_job/);
+  const retry = await runProviderHook(store, "claude", agentCall(repo, { prompt: "Add a CSV export to the reports page" }), open);
+  assert.notEqual(retry.hookSpecificOutput?.permissionDecision, "deny");
+});
+
+test("protected, read-only or Hermes-closed sub-agents are not nudged", async (t) => {
+  const { store, repo } = nudgeStore(t);
+  const cases = [
+    [agentCall(repo, { prompt: "Review the auth change for security bugs" }, "s1"), open],
+    [agentCall(repo, { prompt: "Find where exports are built", subagent_type: "Explore" }, "s2"), open],
+    [agentCall(repo, { prompt: "Add a CSV export" }, "s3"), { ...open, readSpend: async () => ({ configured: false }) }],
+    [{ ...agentCall(repo, { prompt: "Add a CSV export" }, "s4"), cwd: os.tmpdir() }, open], // repo not in hermesRepos
+  ];
+  for (const [input, options] of cases) {
+    const output = await runProviderHook(store, "claude", input, options);
+    assert.notEqual(output.hookSpecificOutput?.permissionDecision, "deny", input.session_id);
+  }
+});

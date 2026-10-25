@@ -383,3 +383,19 @@ test("bad difficulty or role throws TypeError", (t) => {
   assert.throws(() => routeJob(store, "code", { now: NOW, difficulty: "trivial" }), TypeError);
   assert.throws(() => routeJob(store, "code", { now: NOW, role: "boss" }), TypeError);
 });
+
+test("failed attempts must be a non-negative whole number", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  for (const failedAttempts of [-3, 1.5, Number.NaN]) {
+    assert.throws(() => routeJob(store, "code", { now: NOW, failedAttempts }), TypeError, String(failedAttempts));
+  }
+});
+
+test("untagged planning and review default to hard", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  for (const kind of ["plan", "review"]) {
+    const route = routeJob(store, kind, { now: NOW, record: false });
+    assert.equal(route.difficulty, "hard");
+    atRung(route, 1);
+  }
+});

@@ -131,8 +131,9 @@ export async function runHermesJob(store, { kind, taskFile, repo, failedAttempts
   // Hermes can exit 0 after OpenRouter refuses the turn for lack of credit.
   const hermesOk = !result.error && result.status === 0 && !noCredit;
   const checkRun = hermesOk && check?.length ? runCheck(check, repoRoot, worktree, env) : null;
-  // A timeout or no credit is the lane's problem, not the model's; only a real check counts as pass.
-  const outcome = timedOut || noCredit ? "lane-error" : !hermesOk ? "fail" : !checkRun ? "unchecked" : checkRun.exitCode === 0 ? "pass" : "fail";
+  // A timeout, no credit or a Hermes that could not start is the lane's problem, not the model's;
+  // only a real check counts as pass.
+  const outcome = result.error || noCredit ? "lane-error" : !hermesOk ? "fail" : !checkRun ? "unchecked" : checkRun.exitCode === 0 ? "pass" : "fail";
   store.recordOutcome({ lane: "hermes", model: config.hermesModel, kind, difficulty: route.difficulty, result: outcome, createdAt: now });
   const summary = {
     kind,

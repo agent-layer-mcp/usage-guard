@@ -188,6 +188,8 @@ test("a Hermes job that OpenRouter refuses for lack of credit is reported as fai
   });
   t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
   assert.equal(summary.ok, false);
+  assert.equal(summary.result, "lane-error");
+  assert.equal(store.outcomeRates(NOW)[0].total, 0); // not the model's fault
   // The lane stays closed for the rest of the day, then reopens.
   const lane = (at) => routeJob(store, "test-write", { now: at, payAsYouGo: hermes, repo, record: false }).lanes.find((l) => l.lane === "hermes");
   assert.equal(lane(NOW + 60_000).available, false);
@@ -292,6 +294,7 @@ test("a hung hermes is killed at the timeout and reported", async (t) => {
   assert.ok(Date.now() - started < 10_000);
   assert.equal(summary.ok, false);
   assert.equal(summary.timedOut, true);
+  assert.equal(summary.result, "lane-error");
   assert.match(formatHermesJob(summary), /timed out and was killed/);
 });
 
@@ -435,4 +438,25 @@ test("the check can use the repo's node_modules, and the link is removed after",
   const { summary } = await jobWithCheck(t, ["test", "-e", "node_modules/x/index.js"], { setup });
   assert.equal(summary.result, "pass");
   assert.equal(existsSync(path.join(summary.worktree, "node_modules")), false);
+});
+
+test("a hermes binary that cannot start is a lane error, not a model failure", async (t) => {
+  const repo = fakeRepo(t);
+  const home = tempDir(t, "ug-nobin-");
+  const taskFile = path.join(home, "task.txt");
+  writeFileSync(taskFile, "Tidy src/a.js\n");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const summary = await runHermesJob(store, {
+    kind: "code", taskFile, repo, payAsYouGo: hermes, now: NOW, hermesBin: "/no/such/hermes",
+    env: { ...process.env, USAGE_GUARD_HOME: home },
+  });
+  t.after(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", summary.worktree]));
+  assert.equal(summary.result, "lane-error");
+});
+
+test("with Hermes closed, a retry escalates on the first failure", (t) => {
+  const repo = tempDir(t, "ug-closed-");
+  const store = storeWith(t, { hermesRepos: [repo] });
+  const route = routeJob(store, "code", { now: NOW, difficulty: "easy", repo, failedAttempts: 1, record: false }); // no OpenRouter key
+  assert.equal(route.rung, 3);
 });

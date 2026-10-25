@@ -22,7 +22,8 @@ const SUBSCRIPTION_LANES = ["claude", "codex"];
 // model comes from the task's difficulty, made cheaper (never stronger) by quota.
 export function routeJob(store, kind, options = {}) {
   if (!ROUTE_KINDS.includes(kind)) throw new TypeError(`Route kind must be one of: ${ROUTE_KINDS.join(", ")}.`);
-  const difficulty = options.difficulty ?? "medium";
+  // Planning and review default to hard: they keep the strongest model quota allows.
+  const difficulty = options.difficulty ?? (kind === "plan" || kind === "review" ? "hard" : "medium");
   if (!DIFFICULTIES.includes(difficulty)) throw new TypeError(`Difficulty must be one of: ${DIFFICULTIES.join(", ")}.`);
   if (options.role != null && !TASK_ROLES.includes(options.role)) throw new TypeError(`Role must be one of: ${TASK_ROLES.join(", ")}.`);
   const now = options.now ?? Date.now();
@@ -36,17 +37,20 @@ export function routeJob(store, kind, options = {}) {
   // Hard and protected work never go to Hermes, first or as fallback.
   const noHermes = difficulty === "hard" || protectedRole;
   const failed = options.failedAttempts ?? 0;
+  if (!Number.isInteger(failed) || failed < 0) throw new TypeError("Failed attempts must be a whole number, 0 or more.");
+  // A Hermes job that failed with HTTP 402 closes the lane for the rest of the (local) day.
+  const creditClosed = store.getNoticeState("hermes", "credit-closed")?.state === localDay(now);
+  const hermes = hermesLane(config, creditClosed ? { ...options.payAsYouGo, outOfCredit: true } : options.payAsYouGo);
   // Failures on Hermes don't count against subscription rungs: after two, the subscription starts at the task rung.
-  const hermesCandidate = HERMES_KINDS.includes(kind) && !noHermes && config.hermesJobKinds.includes(kind)
-    && repoAllowed(options.repo, config.hermesRepos);
+  // A closed Hermes lane took none of the attempts, so every failure counts.
+  const hermesCandidate = HERMES_KINDS.includes(kind) && !noHermes && hermes.available
+    && config.hermesJobKinds.includes(kind) && repoAllowed(options.repo, config.hermesRepos);
   const subscriptionFailures = hermesCandidate ? Math.max(0, failed - HERMES_MAX_ATTEMPTS) : failed;
   const fit = { difficulty, protectedRole, subscriptionFailures, config };
   const lanes = SUBSCRIPTION_LANES.map((provider) => subscriptionLane(
     buildProviderDecision(store, provider, { now, config, role, record: options.record }), kind, fit,
   ));
-  // A Hermes job that failed with HTTP 402 closes the lane for the rest of the (local) day.
-  const creditClosed = store.getNoticeState("hermes", "credit-closed")?.state === localDay(now);
-  lanes.push(hermesLane(config, creditClosed ? { ...options.payAsYouGo, outOfCredit: true } : options.payAsYouGo));
+  lanes.push(hermes);
 
   let choice = null;
   let reason;

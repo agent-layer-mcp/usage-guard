@@ -415,6 +415,16 @@ the next job:
   Hermes moves one rung stronger, never past what quota allows; a lane that
   can't go stronger is skipped, then the route waits. The MCP tool
   `usage_guard_route` takes the same inputs.
+- When the route says `hermes`, the agent runs the task with the MCP tool
+  `usage_guard_hermes_job` (kind, full task text, repo, optional check command)
+  instead of a Claude sub-agent, then reviews the returned worktree diff before
+  applying it. To make that happen without relying on the agent remembering,
+  Claude's PreToolUse hook stops a general-purpose sub-agent once per 30 minutes
+  per session when Hermes is open for that repo, and says to use the Hermes
+  tool. Starting the sub-agent again goes through, so hard or protected work is
+  never stuck. Planning, review and sensitive prompts, read-only agents such as
+  Explore, and repos outside `hermesRepos` are not stopped. A Hermes job can take
+  up to 20 minutes; raise the client's MCP tool timeout if it gives up sooner.
 - `usage-guard outcome --lane <lane> --model <id> --kind <kind> --difficulty <d>
   --result pass|fail|unchecked|lane-error` (or `usage_guard_outcome`) records
   how a routed task went; no task text is stored. `status` and the History tab

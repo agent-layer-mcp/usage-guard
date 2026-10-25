@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import readline from "node:readline";
 import { CONFIG_SCHEMA, VERSION } from "./config.mjs";
+import { HermesJobRefused, runHermesJob } from "./hermes-job.mjs";
 import { TASK_ROLES } from "./model-stepping.mjs";
-import { OUTCOME_LANES, readOpenRouterSpend, recordRouteOutcome, ROUTE_KINDS, routeJob } from "./route.mjs";
+import { HERMES_KINDS, OUTCOME_LANES, readOpenRouterSpend, recordRouteOutcome, ROUTE_KINDS, routeJob } from "./route.mjs";
 import { completeStatus, providerDecision, syncCodex } from "./service.mjs";
 import { OUTCOME_RESULTS } from "./store.mjs";
 import { DIFFICULTIES } from "./task-fit.mjs";
@@ -54,6 +58,23 @@ const TOOLS = [
         repo: { type: "string", description: "Repo path (needed for Hermes)." },
       },
       required: ["kind"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "usage_guard_hermes_job",
+    description: "Run one task on Hermes (OpenRouter) when usage_guard_route says hermes. It works in a scratch git worktree of the repo's committed files, runs the optional check there, records the result and returns the worktree path and diff summary. Nothing is applied to the repo: review the diff, then apply it. Refuses planning, review, secrets, auth, billing and children's data.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: [...HERMES_KINDS] },
+        task: { type: "string", maxLength: 20000, description: "Full instructions for Hermes: files, the change, how to check it." },
+        repo: { type: "string", description: "Repo path; must be in hermesRepos." },
+        difficulty: { type: "string", enum: ["easy", "medium"] },
+        check: { type: "array", items: { type: "string" }, maxItems: 50, description: "Test command and arguments, e.g. [\"npm\", \"test\"]." },
+        failed: { type: "integer", minimum: 0, description: "Failed Hermes attempts so far for this task." },
+      },
+      required: ["kind", "task", "repo"],
       additionalProperties: false,
     },
   },
@@ -127,7 +148,24 @@ export async function handleRequest(store, request, options = {}) {
 async function callTool(store, params, options = {}) {
   const args = params.arguments || {};
   let value;
-  if (params.name === "usage_guard_route" || params.name === "usage_guard_outcome") {
+  if (params.name === "usage_guard_hermes_job") {
+    // The task text goes to a private temp file only for the run; it is never stored in Usage Guard's database.
+    const dir = mkdtempSync(path.join(os.tmpdir(), "usage-guard-task-"));
+    try {
+      const taskFile = path.join(dir, "task.txt");
+      writeFileSync(taskFile, String(args.task ?? ""), { mode: 0o600 });
+      value = await runHermesJob(store, {
+        kind: args.kind, taskFile, repo: args.repo, difficulty: args.difficulty, check: args.check,
+        failedAttempts: args.failed ?? 0, payAsYouGo: await (options.readSpend || readOpenRouterSpend)(),
+        ...(options.hermesBin && { hermesBin: options.hermesBin }), ...(options.env && { env: options.env }),
+      });
+    } catch (error) {
+      if (!(error instanceof HermesJobRefused || error instanceof TypeError)) throw error;
+      return { content: [{ type: "text", text: `Refused: ${error.message}` }], isError: true };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  } else if (params.name === "usage_guard_route" || params.name === "usage_guard_outcome") {
     // Bad input is the caller's to fix: report it as a tool error, not a server failure.
     try {
       value = params.name === "usage_guard_route"

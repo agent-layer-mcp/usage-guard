@@ -82,3 +82,14 @@ test("stepping status surfaces main and routine models, reason, and overnight su
   assert.match(text, /Model reason: 5-hour usable 25\.0%/);
   assert.match(text, /Overnight: Last 12 hours/);
 });
+
+test("status shows the five worst model success rates and how many more", () => {
+  const rows = [0.9, 0.2, 0.5, 1, 0.7, 0.4, 0.8].map((rate, i) => ({
+    lane: "claude", model: `m${i}`, kind: "code", difficulty: "easy", pass: rate * 10, fail: 10 - rate * 10, total: 10, rate,
+  }));
+  const text = formatStatusText({ config: { enforcement: "protect", qualityLock: true }, providers: [], outcomeRates: rows });
+  assert.match(text, /Model results, last 14 days/);
+  assert.match(text, /m1 .*20% pass/);
+  assert.doesNotMatch(text, /m3 /); // 100% is the best, so it is cut
+  assert.match(text, /2 more/);
+});

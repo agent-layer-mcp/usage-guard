@@ -109,6 +109,7 @@ export function completeStatus(store, options = {}) {
   });
   return {
     ...status,
+    outcomeRates: store.outcomeRates(options.now),
     privacy: {
       ...status.privacy,
       localRequestMetadataRead: Boolean(claudeRequest),

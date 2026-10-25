@@ -145,6 +145,55 @@ keeps the previous copy in `app.prev`, records the version in
 the deployed command so hooks and services point at the fixed `app` path.
 To roll back, move `app.prev` back to `app`.
 
+### More than one computer
+
+Claude and Codex limits belong to your account, not to a computer, so every
+computer you use them on draws from the same 5-hour and weekly allowance. A
+computer without Usage Guard still spends that allowance; the others only see
+it as a sudden jump with no local sessions to explain it. Install Usage Guard
+on every computer that runs Claude Code or Codex.
+
+On each computer:
+
+1. Install it (from the release, or from a checkout as above):
+
+   ```bash
+   npm install --global https://github.com/agent-layer-mcp/usage-guard/releases/latest/download/usage-guard.tgz
+   usage-guard setup --tools claude,codex,hermes
+   ```
+
+2. Sign in to the same Claude and Codex accounts. Each install reads the
+   account-wide meter from that computer's own logins, so all of them see the
+   same totals and work out the same daily share.
+3. Use the same day settings everywhere, so they agree on when "today" starts:
+
+   ```bash
+   usage-guard config dayTimeZone Australia/Brisbane
+   usage-guard config dayStartTime 08:00
+   ```
+
+4. Copy the settings you changed. Run `usage-guard config` on the first
+   computer and set the same values on the others with
+   `usage-guard config <key> <value>`, typically `planPreset` (or
+   `modelLadders`), `payAsYouGoDailyCapUsd`, `hermesModel` and
+   `codexFirstUntilLeftPercent`. `hermesRepos` holds folder paths, so set it to
+   that computer's own paths.
+5. Keep the background timer on (`setup` starts it), so each computer's
+   reading stays fresh even while it is idle.
+
+What is shared and what is not:
+
+- **Shared:** Claude and Codex quota, and so each day's share. If one computer
+  spends today's share, the others see it as spent too.
+- **Shared if you use the same OpenRouter key:** the Hermes daily cap is read
+  from the key's own spend, so one key means one cap across all computers.
+  Separate keys mean a separate cap per key.
+- **Per computer:** settings, decision history, routed-task success rates and
+  Hermes job folders. These live in `~/.usage-guard/` and are never synced.
+
+Check it worked: `usage-guard status` should show the same weekly percentages
+on every computer, within one reading (about 10 minutes).
+
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 
 ## Use

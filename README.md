@@ -366,13 +366,21 @@ On a Mac:
 2. Download `usage-guard-tray-macos.dmg` from the latest
    [release](https://github.com/agent-layer-mcp/usage-guard/releases/latest)
    (one build for Apple Silicon and Intel) and drag **Usage Guard** to
-   Applications.
+   Applications. For a build from a manual workflow run, `gh run download`
+   fails because the artifact is not a zip; fetch it by its artifact ID
+   instead (the ID is on the run's page):
+
+   ```bash
+   gh api repos/agent-layer-mcp/usage-guard/actions/artifacts/<id>/zip > usage-guard-tray-macos.dmg
+   ```
 3. The app is not signed, so the first time, right-click it in Applications
    and choose **Open**, then **Open** again. After that it opens normally.
 4. To start it at login: System Settings → General → Login Items → add
    **Usage Guard**.
 
 It lives in the menu bar only (no Dock icon). A left click opens the panel.
+Opening the app (at launch, or again from Finder or Spotlight) also shows the
+panel, since a full menu bar can hide the item behind a MacBook's notch.
 The `.dmg` is built by the `Mac tray` GitHub workflow when a release is
 published; run that workflow by hand to get one as a build artifact.
 

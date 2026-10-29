@@ -124,6 +124,16 @@ export function formatStatusText(status) {
     }
     output.push("");
   }
+  // Worst first: the models most likely to need a stronger rung.
+  const rates = (status.outcomeRates || []).filter((row) => row.rate != null).sort((a, b) => a.rate - b.rate);
+  if (rates.length) {
+    output.push("Model results, last 14 days");
+    for (const row of rates.slice(0, 5)) {
+      output.push(`  ${row.model} (${row.lane}, ${row.kind}, ${row.difficulty})  ${Math.round(row.rate * 100)}% pass of ${row.total}`);
+    }
+    if (rates.length > 5) output.push(`  ${rates.length - 5} more`);
+    output.push("");
+  }
   output.push(
     status.config.compactionHandoffEnabled
       ? "Local only: quota data stays local; Claude compact summaries are kept only in private handoff files."

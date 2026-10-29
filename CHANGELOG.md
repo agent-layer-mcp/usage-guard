@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Harden Hermes jobs: Hermes gets an allowlisted environment (no Anthropic, GitHub or OAuth tokens);
+  20-minute kill timeout (30 for `test-run`); the scratch worktree is removed on any failure; repos with
+  symlinks that leave the worktree or more secret-like files (`.npmrc`, keystores, `*.tfvars` and others)
+  are refused after a full-depth scan; topic refusal normalises spelling (`privateKey`, `authn`, `jwt`, ...).
 - Rebuild the tray panel and the local dashboard UI around four tabs (Overview, Models, History,
   Settings) with a shared stylesheet and code (`src/ui/`). The dashboard gains the Hermes model picker,
   plan preset, spend cap, pause switch and banked-reset link that the tray already had.

@@ -59,10 +59,11 @@ cloud session: it stops in Claude Code on the web, Codespaces and similar, and
 asks first inside a container. Usage is read from the logins on your machine,
 so once it is installed there it also tracks the cloud sessions on the same
 accounts. It lets you pick any mix of Claude, Codex and Hermes (OpenRouter),
-asks before using your Claude Code login (macOS Keychain, or
-`~/.claude/.credentials.json` elsewhere), checks and privately saves your
-OpenRouter key, and sets up a background check every 10 minutes (systemd on
-Linux, launchd on macOS, Task Scheduler on Windows). It finishes with a first
+asks before using your Claude Code login (macOS Keychain; on Linux
+`~/.claude/.credentials.json`, then the Secret Service keyring), checks and privately saves your
+OpenRouter key, and sets up a background timer that ticks every two minutes and
+reads each lane every 10 minutes (systemd on Linux, launchd on macOS, Task
+Scheduler on Windows). It finishes with a first
 reading of each tool. For scripts: `usage-guard setup --yes --tools claude,codex`.
 `usage-guard install` remains the non-interactive installer for both tools.
 
@@ -144,6 +145,55 @@ keeps the previous copy in `app.prev`, records the version in
 the deployed command so hooks and services point at the fixed `app` path.
 To roll back, move `app.prev` back to `app`.
 
+### More than one computer
+
+Claude and Codex limits belong to your account, not to a computer, so every
+computer you use them on draws from the same 5-hour and weekly allowance. A
+computer without Usage Guard still spends that allowance; the others only see
+it as a sudden jump with no local sessions to explain it. Install Usage Guard
+on every computer that runs Claude Code or Codex.
+
+On each computer:
+
+1. Install it (from the release, or from a checkout as above):
+
+   ```bash
+   npm install --global https://github.com/agent-layer-mcp/usage-guard/releases/latest/download/usage-guard.tgz
+   usage-guard setup --tools claude,codex,hermes
+   ```
+
+2. Sign in to the same Claude and Codex accounts. Each install reads the
+   account-wide meter from that computer's own logins, so all of them see the
+   same totals and work out the same daily share.
+3. Use the same day settings everywhere, so they agree on when "today" starts:
+
+   ```bash
+   usage-guard config dayTimeZone Australia/Brisbane
+   usage-guard config dayStartTime 08:00
+   ```
+
+4. Copy the settings you changed. Run `usage-guard config` on the first
+   computer and set the same values on the others with
+   `usage-guard config <key> <value>`, typically `planPreset` (or
+   `modelLadders`), `payAsYouGoDailyCapUsd`, `hermesModel` and
+   `codexFirstUntilLeftPercent`. `hermesRepos` holds folder paths, so set it to
+   that computer's own paths.
+5. Keep the background timer on (`setup` starts it), so each computer's
+   reading stays fresh even while it is idle.
+
+What is shared and what is not:
+
+- **Shared:** Claude and Codex quota, and so each day's share. If one computer
+  spends today's share, the others see it as spent too.
+- **Shared if you use the same OpenRouter key:** the Hermes daily cap is read
+  from the key's own spend, so one key means one cap across all computers.
+  Separate keys mean a separate cap per key.
+- **Per computer:** settings, decision history, routed-task success rates and
+  Hermes job folders. These live in `~/.usage-guard/` and are never synced.
+
+Check it worked: `usage-guard status` should show the same weekly percentages
+on every computer, within one reading (about 10 minutes).
+
 Claude and Codex require users to review and trust newly installed lifecycle hooks. Review the bundled hooks in [`plugins/usage-guard/hooks`](plugins/usage-guard/hooks) and approve them in the provider UI.
 
 ## Use
@@ -175,7 +225,10 @@ usage-guard config qualityLock false modelStepping true
 usage-guard install --auto-compact-percent 50
 ```
 
-The dashboard runs on `http://127.0.0.1:4765` and binds only to localhost.
+The dashboard runs on `http://127.0.0.1:4765` and binds only to localhost. It
+has the same four tabs as the tray: **Overview**, **Models**, **History** and
+**Settings**. Its on/off switch is read-only; use the tray or
+`usage-guard enable|disable`.
 
 ## Model stepping
 
@@ -305,13 +358,44 @@ usage-guard-tray &                                 # or: usage-guard serve, then
 To start it at login on Linux, add a desktop entry to `~/.config/autostart/`
 whose `Exec=` is the path to `usage-guard-tray`.
 
+On a Mac:
+
+1. Run `usage-guard install` (or `setup`). Besides the monitor, it adds a login
+   service, `sh.agentlayer.usage-guard.serve`, that keeps the tray's local API
+   running; `usage-guard uninstall` removes it.
+2. Download `usage-guard-tray-macos.dmg` from the latest
+   [release](https://github.com/agent-layer-mcp/usage-guard/releases/latest)
+   (one build for Apple Silicon and Intel) and drag **Usage Guard** to
+   Applications. For a build from a manual workflow run, `gh run download`
+   fails because the artifact is not a zip; fetch it by its artifact ID
+   instead (the ID is on the run's page):
+
+   ```bash
+   gh api repos/agent-layer-mcp/usage-guard/actions/artifacts/<id>/zip > usage-guard-tray-macos.dmg
+   ```
+3. The app is not signed, so the first time, right-click it in Applications
+   and choose **Open**, then **Open** again. After that it opens normally.
+4. To start it at login: System Settings → General → Login Items → add
+   **Usage Guard**.
+
+It shows in the menu bar (today's usage, as on Linux) and in the Dock. A left
+click on the menu-bar item, a Dock click, or opening the app from Finder or
+Spotlight shows the panel. A full menu bar hides items behind a MacBook's notch:
+hold Cmd and drag the item further right, or hide some other menu-bar icons.
+The `.dmg` is built by the `Mac tray` GitHub workflow when a release is
+published; run that workflow by hand to get one as a build artifact.
+
 - **Label:** `UG off` when switched off, `UG offline` when the local API is not
   running; otherwise each lane's use of today's share.
 - **Opening the panel:** on Linux, clicking the icon opens a menu; choose
   **Show details**. On Windows and macOS a left click opens it.
-- **Panel:** today's share against the budget per lane, the week bar with the
-  reserve, reset times, the current routing choice and why, the On/Off switch,
-  pause routing, the Hermes model picker, and the daily dollar cap.
+- **Panel:** four tabs. **Overview** shows the next-job route, the On/Off and
+  pause switches, and one compact row each for Claude, Codex and Hermes with
+  today and week bars. **Models** holds the Hermes model picker and your plan's
+  model ladders. **History** lists recent decisions and the Codex banked reset.
+  **Settings** sets the Hermes daily spend cap and explains how it works and the
+  privacy boundary.
+- The dashboard has the same four tabs, but its On/Off switch is read-only.
 - The Codex banked-reset button only opens Codex's usage page after you
   confirm. Usage Guard never spends a banked reset.
 
@@ -338,23 +422,50 @@ the next job:
   and `bulk` to Codex while Codex has a fresh reading and at least 70% of its
   week left, ignoring Codex's daily share (the weekly reserve still applies).
   Below the line, or with a stale or missing reading, the normal rules apply and
-  the reason says so. Planning and review are unchanged, and this rule never
-  picks Hermes. `usage-guard config codexFirstUntilLeftPercent null` turns it off.
+  the reason says so. Planning and review are unchanged. Hermes-first kinds
+  (below) still go to Hermes ahead of this rule while Hermes is open. `usage-guard config codexFirstUntilLeftPercent null` turns it off.
 - Nothing left: the lane is `wait`, with the time the next daily share starts.
 - `{"routingPaused": true}` stops routing; a banked provider reset is never
   spent automatically.
-- Hermes job kinds (`lint-format`, `test-write`, `test-triage`, `doc-update`,
-  `rename-mechanical`, `file-scan`) go to Hermes first, all day, while it is under
-  the cap, but only for repos listed in `hermesRepos` (none by default). Pass
+- Hermes job kinds (`code`, `bulk`, `lint-format`, `test-write`, `test-triage`,
+  `doc-update`, `rename-mechanical`, `file-scan`) go to Hermes first, all day,
+  while it is under the cap, but only for repos listed in `hermesRepos` (none by
+  default). Hermes does the dev work; Claude keeps planning and review. Pass
   `--repo <path>` (default: the current folder) and `--failed <n>`; after two
   failed Hermes attempts the job escalates to Claude or Codex. See
   [docs/hermes-jobs.md](docs/hermes-jobs.md).
+- Task fit: `--difficulty easy|medium|hard` (default `medium`) sets the model
+  rung on Claude and Codex: hard = rung 1, medium = rung 2, easy = rung 4 (Haiku
+  5.5, gpt-6-luna). Quota can only make the pick cheaper. Pass `--role` for
+  protected work (planning, architecture, review, sensitive): it stays at rung 2
+  or stronger and, like `hard`, never goes to Hermes. Each failed attempt after
+  Hermes moves one rung stronger, never past what quota allows; a lane that
+  can't go stronger is skipped, then the route waits. The MCP tool
+  `usage_guard_route` takes the same inputs.
+- When the route says `hermes`, the agent runs the task with the MCP tool
+  `usage_guard_hermes_job` (kind, full task text, repo, optional check command)
+  instead of a Claude sub-agent, then reviews the returned worktree diff before
+  applying it. To make that happen without relying on the agent remembering,
+  Claude's PreToolUse hook stops a general-purpose sub-agent once per 30 minutes
+  per session when Hermes is open for that repo, and says to use the Hermes
+  tool. Starting the sub-agent again goes through, so hard or protected work is
+  never stuck. Planning, review and sensitive prompts, read-only agents such as
+  Explore, and repos outside `hermesRepos` are not stopped. A Hermes job can take
+  up to 20 minutes; raise the client's MCP tool timeout if it gives up sooner.
+- `usage-guard outcome --lane <lane> --model <id> --kind <kind> --difficulty <d>
+  --result pass|fail|unchecked|lane-error` (or `usage_guard_outcome`) records
+  how a routed task went; no task text is stored. `status` and the History tab
+  show pass rates per model and task type for the last 14 days.
 - `usage-guard hermes-job --kind <type> --task-file <file> --repo <path>` runs one
   such job: it refuses planning and review, tasks that mention secrets, auth,
   billing, children, Godot or demos, repos not opted in, and repos with committed
   secret-like files. It runs `hermes` in a scratch worktree of committed files
   under `~/.usage-guard/jobs/`, keeps the full log there and prints a short
   summary. Nothing is applied to the repo; review the worktree diff first.
+  `--check "<test command>"` runs the check in the worktree afterwards, with
+  Hermes's stripped environment and the repo's `node_modules` linked in, and
+  records the result (`pass`, `fail`, `unchecked`, or `lane-error` for a timeout
+  or no credit).
 - `usage-guard test-run -- <command>` runs a test suite with no model, saves the
   full log in `~/.usage-guard/test-runs/` and prints only failing test names and
   short errors. It exits with the suite's exit code.
@@ -396,11 +507,19 @@ system time zone; set it with `install --day-time-zone` or
 `usage-guard config dayTimeZone Australia/Brisbane`). The starting figure is the
 last reading at or before the day start; readings from before Usage Guard was
 installed are filled in from Codex session logs and Claude Desktop's local
-usage cache. Unspent share rolls into later days automatically. Once
+usage cache. Unspent share rolls into later days automatically. If a weekly
+meter falls by more than 2 points mid-period, Usage Guard treats it as a
+provider reset and counts today's share from the reading after the drop
+(`src/daily-budget.mjs`). Once
 today's share is spent the provider moves to `protect` (never `queue`), the
 reason says how much was borrowed from later days, model stepping drops
 one rung, and `route` sends new work to another lane. It never asks for approval or denies a tool. Only the weekly reserve blocks work. Turn it off with
 `{"dailyBudget": false}`.
+
+The background timer ticks every two minutes. A lane whose daily share is spent
+is re-read on every tick; other lanes every 10 minutes (`pollDue` in
+`src/monitor.mjs`). Claude also refreshes at most once a minute while a Claude
+Code session is working.
 
 Claude context guidance defaults to `watch` at 70% and `protect` at 85%.
 Context pressure never changes the selected model and never causes a hard block
@@ -564,7 +683,7 @@ manufacture an estimate.
   described above.
 - Claude Code CLI: plugin, hooks, MCP, and custom status line.
 - Linux: `usage-guard install` adds a systemd user timer
-  (`usage-guard-monitor.timer`) that checks Claude and Codex every minute, and
+  (`usage-guard-monitor.timer`) that runs the monitor on the timings above, and
   alerts use `notify-send`. Claude Desktop's aggregate cache is read from
   `~/.config/Claude` (or `$XDG_CONFIG_HOME/Claude`); it has no reset time, so the
   Claude daily share appears once the Claude Code status line has reported one.

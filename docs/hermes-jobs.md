@@ -48,6 +48,8 @@ Only the files named in the job's inputs are given to the model.
 | Kind | Trigger (request that matches) | Lane | Inputs allowed | Output |
 |---|---|---|---|---|
 | `test-run` | "run the tests", "full test run", any post-feature check | plain script, no model | the repo's test command | pass/fail and a failure summary (test name, error, up to 20 trace lines each) |
+| `code` | feature and fix work | Hermes | the files the task names | a diff; tests must pass; Claude reviews it |
+| `bulk` | large, repetitive edits | Hermes | the files the task names | a diff; tests must pass; Claude reviews it |
 | `lint-format` | fix lint or formatting errors | Hermes | lint output; the files it names | a diff; lint must then pass |
 | `test-write` | write unit tests for finished, reviewed code | Hermes | the target source files; existing tests nearby; fake fixtures | new or changed test files only |
 | `test-triage` | a `test-run` failed: is the test or the code wrong? | Hermes | the failure summary; the failing test file; the code under test | a verdict (`test-bug` / `code-bug` / `unclear`) with one line of reason; for `test-bug`, a test-only diff |
@@ -69,6 +71,12 @@ reviewer rejects it) after the second attempt, the job moves to the subscription
 lane `route` picks for `code`, with the Hermes attempt attached as context.
 `test-triage` verdicts of `code-bug` or `unclear` always go to Claude or Codex;
 Hermes never fixes product code found broken by a test.
+
+`hermes-job --check "<test command>"` runs the check in the scratch worktree
+after Hermes finishes, with the same stripped environment Hermes gets and the
+repo's `node_modules` linked in for the check only. The job records its result:
+`pass`, `fail`, `unchecked` (no check given) or `lane-error` (timeout, no
+credit; not the model's fault). Only pass and fail count in success rates.
 
 ### Review rule
 
@@ -115,3 +123,5 @@ secret-file scan). Not built: the assertion-count check and the automatic Claude
 review; the agent does the review step by hand. The task-text check is a keyword
 filter and cannot detect children's data inside the repo; the opt-in list is the
 real guard. `hermes-job` refuses while Usage Guard is off.
+
+The worktree is not a sandbox: Hermes's tools can read files under HOME.

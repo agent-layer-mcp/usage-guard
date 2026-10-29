@@ -3,6 +3,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_CONFIG, databasePath, expandPlanPreset, normalizeConfig, validateConfigPatch } from "./config.mjs";
 
+// Routed task results; only pass and fail count toward a model's success rate.
+export const OUTCOME_RESULTS = Object.freeze(["pass", "fail", "unchecked", "lane-error"]);
+const FOURTEEN_DAYS = 14 * 24 * 60 * 60_000;
+
 export class GuardStore {
   constructor(options = {}) {
     const filename = options.filename || databasePath(options.env);
@@ -100,6 +104,16 @@ export class GuardStore {
         metadata TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS model_steps_recent ON model_steps(created_at DESC);
+      CREATE TABLE IF NOT EXISTS route_outcomes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        lane TEXT NOT NULL,
+        model TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        difficulty TEXT NOT NULL,
+        result TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS route_outcomes_recent ON route_outcomes(created_at DESC);
     `);
     // Pre-stepping releases wrote their fixed true default on every config change.
     // Once upgraded, an explicit qualityLock=true remains authoritative.
@@ -273,6 +287,32 @@ export class GuardStore {
     return statement
       .all(provider, windowKey, since, resetAt)
       .map(mapObservation);
+  }
+
+  pruneDecisions(now = Date.now(), maxAgeMs = FOURTEEN_DAYS) {
+    this.database.prepare("DELETE FROM decisions WHERE created_at < ?").run(now - maxAgeMs);
+    this.database.prepare("DELETE FROM route_outcomes WHERE created_at < ?").run(now - maxAgeMs);
+  }
+
+  // No task text, prompts or code: only which model did which kind of work, and how it went.
+  recordOutcome({ lane, model, kind, difficulty, result, createdAt = Date.now() }) {
+    if (!OUTCOME_RESULTS.includes(result)) throw new TypeError(`Result must be one of: ${OUTCOME_RESULTS.join(", ")}.`);
+    this.database.prepare(`
+      INSERT INTO route_outcomes (lane, model, kind, difficulty, result, created_at) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(lane, model, kind, difficulty, result, createdAt);
+  }
+
+  outcomeRates(now = Date.now(), maxAgeMs = FOURTEEN_DAYS) {
+    return this.database.prepare(`
+      SELECT lane, model, kind, difficulty,
+        SUM(result = 'pass') AS pass, SUM(result = 'fail') AS fail
+      FROM route_outcomes WHERE created_at >= ?
+      GROUP BY lane, model, kind, difficulty ORDER BY lane, model, kind, difficulty
+    `).all(now - maxAgeMs).map((row) => {
+      const total = row.pass + row.fail;
+      return { lane: row.lane, model: row.model, kind: row.kind, difficulty: row.difficulty,
+        pass: row.pass, fail: row.fail, total, rate: total ? row.pass / total : null };
+    });
   }
 
   recordDecision(decision) {

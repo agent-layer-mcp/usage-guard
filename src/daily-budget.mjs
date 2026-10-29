@@ -1,5 +1,11 @@
 const DAY = 24 * 60 * 60_000;
 const SPENT_MARGIN_PERCENT = 0.5;
+// A weekly meter only falls when the provider resets it; whole-% readings wobble by about 1.
+const RESET_DROP_PERCENT = 2;
+// Sources can disagree by a few points; a drop that stays above the day's start only counts when large.
+const LARGE_DROP_PERCENT = 10;
+const HOUR = 60 * 60_000;
+const DESKTOP_CACHE_SOURCE = "claude-desktop-aggregate-cache";
 
 // Most recent local day boundary (e.g. 08:00) at or before `now`.
 export function dayStartAt(now, config = {}) {
@@ -24,10 +30,13 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
   const dayStart = dayStartAt(now, config);
   const periodStart = window.resetsAt - window.windowMinutes * 60_000;
   const reserve = window.reservePercent ?? config.weeklyReservePercent;
-  const samples = (history || []).filter((item) => item.observedAt <= now && item.observedAt >= periodStart);
+  // Readings that still show the previous period (a lagging reset time) belong to that period, not this one.
+  const samples = (history || []).filter((item) => item.observedAt <= now && item.observedAt >= periodStart
+    && (item.resetsAt == null || Math.abs(item.resetsAt - window.resetsAt) < HOUR));
   let usedAtDayStart;
   let baselineEstimated = false;
   let baselineAt = null;
+  let baselineSource;
   if (periodStart >= dayStart) {
     usedAtDayStart = 0; // The weekly window itself began today.
   } else {
@@ -35,8 +44,30 @@ export function evaluateDailyBudget(window, history, config, now = Date.now()) {
     const after = samples.find((item) => item.observedAt > dayStart);
     usedAtDayStart = before?.usedPercent ?? after?.usedPercent ?? window.usedPercent;
     baselineEstimated = !before;
+    baselineSource = (before ?? after)?.source;
     // When the starting figure was read: the last reading before the day began, or the first after.
     baselineAt = before?.observedAt ?? after?.observedAt ?? window.observedAt ?? now;
+  }
+  // A mid-period reset (e.g. a provider restoring the allowance): count today from the reading
+  // after the last drop, so the restored share opens now and later use is counted from there.
+  const since = [...samples.filter((item) => item.observedAt > (baselineAt ?? periodStart)),
+    { observedAt: now, usedPercent: window.usedPercent, source: window.source }];
+  // Sources can disagree by more than a wobble (OAuth vs desktop cache), so a drop only counts
+  // against the last reading from the same source, even when other sources' readings sit between.
+  // Older rows carry a suffixed name (e.g. "claude-desktop-aggregate-cache+status-line-reset"): same source.
+  const sourceKey = (name) => (typeof name === "string" && name.startsWith(DESKTOP_CACHE_SOURCE) ? DESKTOP_CACHE_SOURCE : name);
+  const lastBySource = new Map([[sourceKey(baselineSource), usedAtDayStart]]);
+  for (const item of since) {
+    // A source's first reading is checked against the day's start, but only a large drop counts there.
+    const key = sourceKey(item.source);
+    const seen = lastBySource.has(key);
+    const drop = (seen ? lastBySource.get(key) : usedAtDayStart) - item.usedPercent;
+    if (drop > RESET_DROP_PERCENT && (seen ? item.usedPercent < usedAtDayStart || drop > LARGE_DROP_PERCENT : drop > LARGE_DROP_PERCENT)) {
+      usedAtDayStart = item.usedPercent;
+      baselineAt = item.observedAt;
+      baselineEstimated = false;
+    }
+    lastBySource.set(key, item.usedPercent);
   }
   usedAtDayStart = Math.min(usedAtDayStart, window.usedPercent);
 

@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readOpenRouterSpend, routeJob } from "../src/route.mjs";
 import { GuardStore } from "../src/store.mjs";
+import { buildProviderDecision } from "../src/policy.mjs";
+import { realpathSync } from "node:fs";
+import os from "node:os";
 
 const HOUR = 60 * 60_000;
 const NOW = Date.UTC(2026, 9, 20, 1, 0); // 11:00 Brisbane
@@ -71,7 +74,7 @@ test("OpenRouter spend uses only the API key and fails soft", async () => {
   let seen;
   const spend = await readOpenRouterSpend({
     env: { OPENROUTER_API_KEY: "k" },
-    fetch: async (url, init) => { seen = [url, init.headers.Authorization]; return { ok: true, json: async () => ({ data: { usage_daily: 1.5 } }) }; },
+    fetch: async (url, init) => { seen ??= [url, init.headers.Authorization]; return { ok: true, json: async () => ({ data: { usage_daily: 1.5 } }) }; },
   });
   assert.deepEqual(seen, ["https://openrouter.ai/api/v1/key", "Bearer k"]);
   assert.equal(spend.spentTodayUsd, 1.5);
@@ -253,4 +256,146 @@ test("stale Claude and spent Codex: code never goes to Codex, routine work goes 
   const bulk = routeJob(store, "bulk", { now: later, payAsYouGo: hermes(0), record: false });
   assert.equal(bulk.lane, "hermes");
   assert.match(bulk.reason, /Claude has no fresh reading, so routine work goes to Hermes/);
+});
+
+test("a Hermes job with no lane open waits instead of crashing", (t) => {
+  // Both subscriptions spent; Hermes at its cap.
+  const store = fixture(t, { claude: [55, 90], codex: [55, 90], config: { hermesRepos: [process.cwd()] } });
+  const route = routeJob(store, "lint-format", { now: NOW, payAsYouGo: hermes(5), repo: process.cwd(), record: false });
+  assert.equal(route.lane, "wait");
+  assert.match(route.reason, /No lane has budget/);
+});
+
+test("planning skips a stale Claude lane when Codex has a fresh reading", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  const later = NOW + HOUR;
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: RESET }] });
+  assert.equal(routeJob(store, "plan", { now: later, payAsYouGo: hermes(0), record: false }).lane, "codex");
+});
+
+test("planning and review say plainly when a stale Claude reading sends them to Codex", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  const later = NOW + HOUR;
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: later,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: RESET }] });
+  const plan = routeJob(store, "plan", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.match(plan.reason, /^Claude has no fresh reading, so planning goes to Codex\./);
+  const review = routeJob(store, "review", { now: later, payAsYouGo: hermes(0), record: false });
+  assert.match(review.reason, /^Claude has no fresh reading, so review goes to Codex\./);
+});
+
+test("a lane with no daily share ranks after one with a daily share", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  // Codex loses its reset time, so it reports weekly % (a different unit) instead of today's points.
+  store.saveSnapshot({ provider: "codex", source: "test", observedAt: NOW + 60_000,
+    windows: [{ key: "seven-day", label: "weekly", usedPercent: 41, windowMinutes: 10_080, resetsAt: null }] });
+  const route = routeJob(store, "code", { now: NOW + 60_000, payAsYouGo: hermes(0), record: false });
+  assert.equal(route.lanes.find((l) => l.lane === "codex").hasDailyShare, false);
+  assert.equal(route.lane, "claude");
+});
+
+test("route previews record no decisions", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  routeJob(store, "code", { now: NOW, payAsYouGo: hermes(0), record: false });
+  assert.equal(store.recentDecisions(50).length, 0);
+});
+
+test("Hermes closes when OpenRouter credit is used up, before its daily cap", async (t) => {
+  const reply = (body) => ({ ok: true, json: async () => ({ data: body }) });
+  const spend = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
+    fetch: async (url) => reply(url.endsWith("/credits") ? { total_credits: 10, total_usage: 10.02 } : { usage_daily: 0.01, limit_remaining: null }) });
+  assert.equal(spend.outOfCredit, true);
+  // An ordinary inference key gets 403 from /credits: the balance is unknown, not zero.
+  const unknown = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
+    fetch: async (url) => (url.endsWith("/credits") ? { ok: false, status: 403 } : reply({ usage_daily: 0.01, limit_remaining: 5 })) });
+  assert.equal(unknown.outOfCredit, false);
+  assert.equal(unknown.creditLeftUsd, null);
+  const store = fixture(t, { claude: [55, 90], codex: [55, 90] });
+  const hermesLane = routeJob(store, "code", { now: NOW, payAsYouGo: spend, record: false }).lanes.find((l) => l.lane === "hermes");
+  assert.equal(hermesLane.available, false);
+  assert.match(hermesLane.reason, /credit is used up/);
+  const keyCapped = await readOpenRouterSpend({ env: { OPENROUTER_API_KEY: "k" },
+    fetch: async (url) => (url.endsWith("/credits") ? { ok: false } : reply({ usage_daily: 0, limit_remaining: 0 })) });
+  assert.equal(keyCapped.outOfCredit, true);
+});
+
+// Task-fit routing: difficulty sets the rung, quota can only push cheaper.
+const LADDER = {
+  claude: ["claude-opus-5-5/high", "claude-sonnet-5-5/high", "claude-sonnet-5-5/medium", "claude-haiku-5-5/default"],
+  codex: ["gpt-6.1-sol/high", "gpt-6.1-sol/medium", "gpt-6-luna/high", "gpt-6-luna/medium"],
+};
+const pick = (route) => `${route.model}/${route.effort}`;
+const atRung = (route, rung) => {
+  assert.equal(route.rung, rung);
+  assert.equal(pick(route), LADDER[route.lane][rung - 1]);
+};
+const allowed = () => realpathSync(os.tmpdir());
+
+test("easy file-scan picks the cheapest rung", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  atRung(routeJob(store, "file-scan", { now: NOW, difficulty: "easy", payAsYouGo: hermes(9), record: false }), 4);
+});
+
+test("untagged code picks rung 2", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  const route = routeJob(store, "code", { now: NOW, record: false });
+  assert.equal(route.difficulty, "medium");
+  atRung(route, 2);
+});
+
+test("hard code picks rung 1 and never Hermes", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11], config: { hermesRepos: [allowed()] } });
+  const route = routeJob(store, "code", { now: NOW, difficulty: "hard", repo: allowed(), payAsYouGo: hermes(0), record: false });
+  assert.notEqual(route.lane, "hermes");
+  atRung(route, 1);
+  // Even with both subscriptions spent, hard work waits rather than falling back to Hermes.
+  const spent = fixture(t, { claude: [59, 75], codex: [50, 70], config: { hermesRepos: [allowed()] } });
+  assert.equal(routeJob(spent, "code", { now: NOW, difficulty: "hard", repo: allowed(), payAsYouGo: hermes(0), record: false }).lane, "wait");
+});
+
+test("role sensitive keeps easy code off Hermes and at rung 2", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11], config: { hermesRepos: [allowed()] } });
+  const route = routeJob(store, "code", { now: NOW, difficulty: "easy", role: "sensitive", repo: allowed(), payAsYouGo: hermes(0), record: false });
+  assert.notEqual(route.lane, "hermes");
+  atRung(route, 2);
+});
+
+test("failed on a capped lane switches lane, then waits", (t) => {
+  const store = fixture(t, { claude: [69, 70], codex: [69, 70] }); // weekly usable under 30%: quota rung 2
+  assert.equal(routeJob(store, "code", { now: NOW, record: false }).rung, 2);
+  const route = routeJob(store, "code", { now: NOW, failedAttempts: 1, record: false });
+  assert.equal(route.lane, "wait");
+  assert.match(route.reason, /No lane can take a stronger model/);
+});
+
+test("stale lane keeps old model fields", (t) => {
+  const store = fixture(t, { claude: [59, 60], codex: [40, 41] });
+  const later = NOW + 60 * 60_000;
+  const route = routeJob(store, "code", { now: later, record: false });
+  const claude = route.lanes.find((l) => l.lane === "claude");
+  assert.equal(claude.rung, null);
+  assert.equal(claude.model, buildProviderDecision(store, "claude", { now: later, role: "standard", record: false }).recommendedModel);
+});
+
+test("bad difficulty or role throws TypeError", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  assert.throws(() => routeJob(store, "code", { now: NOW, difficulty: "trivial" }), TypeError);
+  assert.throws(() => routeJob(store, "code", { now: NOW, role: "boss" }), TypeError);
+});
+
+test("failed attempts must be a non-negative whole number", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  for (const failedAttempts of [-3, 1.5, Number.NaN]) {
+    assert.throws(() => routeJob(store, "code", { now: NOW, failedAttempts }), TypeError, String(failedAttempts));
+  }
+});
+
+test("untagged planning and review default to hard", (t) => {
+  const store = fixture(t, { claude: [10, 11], codex: [10, 11] });
+  for (const kind of ["plan", "review"]) {
+    const route = routeJob(store, kind, { now: NOW, record: false });
+    assert.equal(route.difficulty, "hard");
+    atRung(route, 1);
+  }
 });

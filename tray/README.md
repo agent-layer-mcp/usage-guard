@@ -11,7 +11,8 @@ or `USAGE_GUARD_PORT`).
 - On/Off switch at the top of the panel and in the menu; it runs
   `usage-guard enable|disable`.
 - Linux tray icons only show a menu, so open the panel with **Show details**. On
-  Windows and macOS a left click toggles it.
+  Windows and macOS a left click toggles it. On macOS, opening the app also shows
+  it, in case the menu-bar item is hidden behind the notch.
 
 The webview never talks to the API directly: a few whitelisted Rust commands
 (status, route preview, pause) do, so the API stays closed to other origins.
@@ -28,3 +29,15 @@ cd tray && cargo build --release
 
 `cargo tauri build` (with the Tauri CLI) produces installers for the current
 platform.
+
+On a Mac, the `Mac tray` GitHub workflow builds one universal `.dmg` (Apple
+Silicon and Intel) and attaches it to each published release as
+`usage-guard-tray-macos.dmg`. To build it yourself on a Mac:
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm install --global @tauri-apps/cli@2
+cd tray && tauri build --target universal-apple-darwin --bundles dmg
+```
+
+The app is unsigned: right-click → **Open** on first launch.

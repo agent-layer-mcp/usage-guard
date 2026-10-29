@@ -20,7 +20,9 @@ export function saveTab(storage, tab) {
 }
 
 // Arrow keys move and wrap, Home/End jump; any other key returns null.
-export function tabFromKey(current, key) {
+// With a modifier held it returns null too, so Alt+Left (browser Back) and friends keep working.
+export function tabFromKey(current, key, mods = {}) {
+  if (mods.altKey || mods.ctrlKey || mods.metaKey || mods.shiftKey) return null;
   const index = TABS.findIndex((tab) => tab.id === current);
   if (index < 0) return null;
   const last = TABS.length - 1;
@@ -50,7 +52,7 @@ export function initTabs(root, storage) {
   };
   for (const tab of tabs) tab.addEventListener("click", () => select(tab.dataset.tab));
   root.querySelector('[role="tablist"]').addEventListener("keydown", (event) => {
-    const next = tabFromKey(event.target.closest?.('[role="tab"]')?.dataset.tab, event.key);
+    const next = tabFromKey(event.target.closest?.('[role="tab"]')?.dataset.tab, event.key, event);
     if (!next) return;
     event.preventDefault();
     select(next, { focus: true });

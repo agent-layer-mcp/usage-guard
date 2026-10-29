@@ -378,9 +378,10 @@ On a Mac:
 4. To start it at login: System Settings → General → Login Items → add
    **Usage Guard**.
 
-It lives in the menu bar only (no Dock icon). A left click opens the panel.
-Opening the app (at launch, or again from Finder or Spotlight) also shows the
-panel, since a full menu bar can hide the item behind a MacBook's notch.
+It shows in the menu bar (today's usage, as on Linux) and in the Dock. A left
+click on the menu-bar item, a Dock click, or opening the app from Finder or
+Spotlight shows the panel. A full menu bar hides items behind a MacBook's notch:
+hold Cmd and drag the item further right, or hide some other menu-bar icons.
 The `.dmg` is built by the `Mac tray` GitHub workflow when a release is
 published; run that workflow by hand to get one as a build artifact.
 

@@ -201,6 +201,9 @@ fn main() {
                 tray = tray.icon_as_template(true);
             }
             tray.build(app)?;
+            // The menu-bar item can hide behind a MacBook notch, so opening the app shows the panel.
+            #[cfg(target_os = "macos")]
+            show_panel(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -209,6 +212,13 @@ fn main() {
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run the Usage Guard tray");
+        .build(tauri::generate_context!())
+        .expect("failed to build the Usage Guard tray")
+        .run(|_app, _event| {
+            // Opening the app again (Finder, Spotlight, Dock) shows the panel.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                show_panel(_app);
+            }
+        });
 }
